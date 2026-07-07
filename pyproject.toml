@@ -1,0 +1,30 @@
+[project]
+name = "fmodmaster"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Anderson Souza", email = "andersom_jag@hotmail.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "flet[all]>=0.85.3",
+    "pymodbus>=3.13.1",
+    "pyserial>=3.5",
+]
+
+[project.scripts]
+fmodmaster = "fmodmaster:main"
+
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.1.0",
+    "pytest>=9.1.1",
+]
+
+[tool.flet]
+desktop_flavor = "full"
