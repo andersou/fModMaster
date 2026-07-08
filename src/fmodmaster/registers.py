@@ -161,7 +161,15 @@ class RegistersModel:
             )
             for index, row in enumerate(self.cells)
         ]
-        return ft.DataTable(columns=columns, rows=rows, data=self)
+        return ft.DataTable(
+            columns=columns,
+            rows=rows,
+            data=self,
+            column_spacing=8 if self.is_write else 24,
+            horizontal_margin=8 if self.is_write else 16,
+            data_row_min_height=36 if self.is_write else None,
+            heading_row_height=36,
+        )
 
     @property
     def row_headers(self) -> tuple[str, ...]:
@@ -324,16 +332,31 @@ class RegistersModel:
             return ft.DataCell(field, tooltip=cell.tooltip)
         text = ft.Text(
             cell.visible_text,
+            size=14,
             color=_COLOR_TEXT if cell.is_used and cell.is_valid else _COLOR_ERROR,
-            bgcolor=_COLOR_OUT_OF_RANGE_BG if not cell.is_used else None,
         )
-        return ft.DataCell(text, tooltip=cell.tooltip or None)
+        return ft.DataCell(
+            ft.Container(
+                text,
+                width=75,
+                height=36,
+                alignment=ft.Alignment.CENTER_LEFT,
+                bgcolor=_COLOR_OUT_OF_RANGE_BG if not cell.is_used else None,
+            ),
+            tooltip=cell.tooltip or None,
+        )
 
     def _build_text_field(self, cell: RegisterCell) -> ft.TextField:
         field = ft.TextField(
             value="" if cell.visible_text == "-" else cell.visible_text,
             tooltip=cell.tooltip,
             max_length=self._max_length(),
+            counter="",
+            width=75,
+            height=36,
+            text_size=14,
+            content_padding=ft.Padding(4, 2, 4, 2),
+            border_radius=3,
             on_change=None,
             on_blur=None,
         )

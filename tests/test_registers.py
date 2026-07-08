@@ -18,6 +18,8 @@ from fmodmaster.registers import (
 
 def _text_cell(cell: ft.DataCell) -> ft.Text:
     content = cell.content
+    if isinstance(content, ft.Container):
+        content = content.content
     assert isinstance(content, ft.Text)
     return content
 
@@ -341,7 +343,7 @@ class TestFloatWriteCollection:
         )
 
         assert isinstance(table.rows[0].cells[0].content, ft.TextField)
-        assert isinstance(table.rows[0].cells[1].content, ft.Text)
+        _text_cell(table.rows[0].cells[1])
 
     def test_invalid_float_rejected_in_collection(self) -> None:
         table = build_grid(

@@ -46,25 +46,22 @@ class PageLike(Protocol):
     dialog: ft.AlertDialog | None
     overlay: list[Any]
 
-    def run_thread(self, handler: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
-        ...
+    def run_thread(
+        self, handler: Callable[..., Any], *args: Any, **kwargs: Any
+    ) -> None: ...
 
     def run_task(
         self,
         handler: Callable[..., Coroutine[Any, Any, Any]],
         *args: Any,
         **kwargs: Any,
-    ) -> Any:
-        ...
+    ) -> Any: ...
 
-    def update(self) -> None:
-        ...
+    def update(self) -> None: ...
 
-    def show_dialog(self, dialog: ft.AlertDialog) -> None:
-        ...
+    def show_dialog(self, dialog: ft.AlertDialog) -> None: ...
 
-    def pop_dialog(self) -> None:
-        ...
+    def pop_dialog(self) -> None: ...
 
 
 class SettingsLike(Protocol):
@@ -91,14 +88,11 @@ class SettingsLike(Protocol):
     base_addr: str
     logging_level: int
 
-    def save_settings(self, path: str | None = None) -> None:
-        ...
+    def save_settings(self, path: str | None = None) -> None: ...
 
-    def load_session(self, path: str) -> None:
-        ...
+    def load_session(self, path: str) -> None: ...
 
-    def save_session(self, path: str) -> None:
-        ...
+    def save_session(self, path: str) -> None: ...
 
 
 class CommLike(Protocol):
@@ -127,30 +121,23 @@ class CommLike(Protocol):
         stop_bits: int,
         rts: str,
         timeout: int | str | float,
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
-    def connect_tcp(self, ip: str, port: int, timeout: int | str | float) -> bool:
-        ...
+    def connect_tcp(self, ip: str, port: int, timeout: int | str | float) -> bool: ...
 
-    def disconnect(self) -> None:
-        ...
+    def disconnect(self) -> None: ...
 
-    def transaction(self) -> None:
-        ...
+    def transaction(self) -> None: ...
 
-    def start_scan(self) -> None:
-        ...
+    def start_scan(self) -> None: ...
 
-    def stop_scan(self) -> None:
-        ...
+    def stop_scan(self) -> None: ...
 
-    def reset_counters(self) -> None:
-        ...
+    def reset_counters(self) -> None: ...
 
-    def report_slave_id(self, slave: int | None = None) -> tuple[bool, int | None, bytes]:
-        ...
-
+    def report_slave_id(
+        self, slave: int | None = None
+    ) -> tuple[bool, int | None, bytes]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,7 +315,11 @@ _SPECS_BY_CODE: Final = {spec.code: spec for spec in _FUNCTION_SPECS}
 
 
 def _labeled_field(label: str | ft.Text, control: ft.Control) -> ft.Column:
-    label_control = label if isinstance(label, ft.Text) else ft.Text(label, size=12, weight=ft.FontWeight.W_500)
+    label_control = (
+        label
+        if isinstance(label, ft.Text)
+        else ft.Text(label, size=12, weight=ft.FontWeight.W_500)
+    )
     return ft.Column(
         controls=[
             label_control,
@@ -348,7 +339,9 @@ class MainViewController:
     ) -> None:
         self.page = page
         self.settings = settings
-        self.comm: CommLike = comm if comm is not None else ModbusComm(refresh_cb=self.schedule_refresh)
+        self.comm: CommLike = (
+            comm if comm is not None else ModbusComm(refresh_cb=self.schedule_refresh)
+        )
         self.controls = self._build_controls()
         self.root = self._build_layout()
         self._bind_handlers()
@@ -378,13 +371,15 @@ class MainViewController:
                 ],
             ),
             slave_label=ft.Text("Slave Addr"),
-            slave_field=ft.TextField(value=str(self.settings.slave_id), width=120, height=48),
+            slave_field=ft.TextField(
+                value=str(self.settings.slave_id), width=120, height=48
+            ),
             scan_rate_field=ft.TextField(
                 value=str(self.settings.scan_rate), width=160, height=48
             ),
             function_dropdown=ft.Dropdown(
                 value=str(fc),
-                width=260,
+                width=220,
                 height=48,
                 options=[
                     ft.DropdownOption(key=str(spec.code), text=spec.name)
@@ -392,7 +387,7 @@ class MainViewController:
                 ],
             ),
             start_addr_field=ft.TextField(
-                value=str(self.settings.start_addr), width=160, height=48
+                value=str(self.settings.start_addr), width=120, height=48
             ),
             address_base_toggle=ft.SegmentedButton(
                 segments=[
@@ -402,10 +397,10 @@ class MainViewController:
                 selected=[_ADDR_DEC],
             ),
             qty_label=ft.Text(_SPECS_BY_CODE[fc].quantity_label),
-            qty_field=ft.TextField(value=str(qty), width=140, height=48),
+            qty_field=ft.TextField(value=str(qty), width=110, height=48),
             data_format_dropdown=ft.Dropdown(
                 value=data_format,
-                width=150,
+                width=110,
                 height=48,
                 options=[
                     ft.DropdownOption(key=_FORMAT_BIN, text="Bin"),
@@ -457,7 +452,17 @@ class MainViewController:
                 self._submenu("File", ["Load Session", "Save Session"]),
                 self._submenu("Options", ["Modbus RTU", "Modbus TCP", "Settings"]),
                 self._submenu("View", ["Log File", "Bus Monitor"]),
-                self._submenu("Commands", ["Connect", "Read / Write", "Scan", "Clear Table", "Reset Counters", "Tools"]),
+                self._submenu(
+                    "Commands",
+                    [
+                        "Connect",
+                        "Read / Write",
+                        "Scan",
+                        "Clear Table",
+                        "Reset Counters",
+                        "Tools",
+                    ],
+                ),
                 self._submenu("Help", ["About"]),
             ]
         )
@@ -465,7 +470,10 @@ class MainViewController:
     def _submenu(self, label: str, item_labels: Sequence[str]) -> ft.SubmenuButton:
         return ft.SubmenuButton(
             content=label,
-            controls=[ft.TextButton(text, on_click=self._menu_handler(text)) for text in item_labels],
+            controls=[
+                ft.TextButton(text, on_click=self._menu_handler(text))
+                for text in item_labels
+            ],
         )
 
     def _build_toolbar(self) -> ft.Row:
@@ -523,7 +531,11 @@ class MainViewController:
                             _labeled_field("Addr Base", c.address_base_toggle),
                             _labeled_field(c.qty_label, c.qty_field),
                             _labeled_field("Data Format", c.data_format_dropdown),
-                            c.signed_checkbox,
+                            ft.Container(
+                                c.signed_checkbox,
+                                height=48,
+                                alignment=ft.Alignment.BOTTOM_LEFT,
+                            ),
                         ],
                         wrap=True,
                         spacing=12,
@@ -598,12 +610,16 @@ class MainViewController:
         return show_stub
 
     def _on_mode_change(self) -> None:
-        self.controls.slave_label.value = "Unit ID" if self._mode() == _MODE_TCP else "Slave Addr"
+        self.controls.slave_label.value = (
+            "Unit ID" if self._mode() == _MODE_TCP else "Slave Addr"
+        )
         self.schedule_refresh()
 
     def _on_function_change(self) -> None:
         spec = self._function_spec()
-        qty = _clamp_quantity(_parse_int(self.controls.qty_field.value, spec.min_qty), spec)
+        qty = _clamp_quantity(
+            _parse_int(self.controls.qty_field.value, spec.min_qty), spec
+        )
         if spec.locks_quantity:
             qty = 1
         self.controls.qty_field.value = str(qty)
@@ -670,8 +686,12 @@ class MainViewController:
 
     def _show_rtu_settings(self, *_: Any) -> None:
         data = RtuSettingsDialogData(
-            serial_dev=ft.TextField(value=self.settings.serial_dev, label="Serial device"),
-            serial_port=ft.TextField(value=self.settings.serial_port, label="Serial port"),
+            serial_dev=ft.TextField(
+                value=self.settings.serial_dev, label="Serial device"
+            ),
+            serial_port=ft.TextField(
+                value=self.settings.serial_port, label="Serial port"
+            ),
             baud=ft.TextField(value=self.settings.baud, label="Baud"),
             data_bits=ft.TextField(value=self.settings.data_bits, label="Data Bits"),
             stop_bits=ft.TextField(value=self.settings.stop_bits, label="Stop Bits"),
@@ -681,7 +701,9 @@ class MainViewController:
 
         def save(*_: Any) -> None:
             self.settings.serial_dev = data.serial_dev.value or self.settings.serial_dev
-            self.settings.serial_port = data.serial_port.value or self.settings.serial_port
+            self.settings.serial_port = (
+                data.serial_port.value or self.settings.serial_port
+            )
             self.settings.serial_port_name = Settings._compute_serial_port_name(
                 self.settings.serial_dev,
                 self.settings.serial_port,
@@ -738,7 +760,9 @@ class MainViewController:
 
     def _show_general_settings(self, *_: Any) -> None:
         data = GeneralSettingsDialogData(
-            time_out=ft.TextField(value=self.settings.time_out, label="Response Timeout (ms)"),
+            time_out=ft.TextField(
+                value=self.settings.time_out, label="Response Timeout (ms)"
+            ),
             max_no_of_lines=ft.TextField(
                 value=self.settings.max_no_of_lines,
                 label="Max No Of Bus Monitor Lines",
@@ -771,7 +795,12 @@ class MainViewController:
             ModalDialogSpec(
                 "Settings",
                 ft.Column(
-                    [data.time_out, data.max_no_of_lines, data.base_addr, data.float_endian],
+                    [
+                        data.time_out,
+                        data.max_no_of_lines,
+                        data.base_addr,
+                        data.float_endian,
+                    ],
                     width=420,
                     spacing=8,
                 ),
@@ -873,21 +902,31 @@ class MainViewController:
         self.settings.save_session(path)
 
     def _load_main_fields_from_settings(self) -> None:
-        self.controls.mode_dropdown.value = _MODE_TCP if self.settings.modbus_mode == 1 else _MODE_RTU
+        self.controls.mode_dropdown.value = (
+            _MODE_TCP if self.settings.modbus_mode == 1 else _MODE_RTU
+        )
         self.controls.slave_field.value = str(self.settings.slave_id)
         self.controls.scan_rate_field.value = str(self.settings.scan_rate)
-        self.controls.function_dropdown.value = str(_normalize_function_code(self.settings.function_code))
+        self.controls.function_dropdown.value = str(
+            _normalize_function_code(self.settings.function_code)
+        )
         self.controls.start_addr_field.value = str(self.settings.start_addr)
         self.controls.qty_field.value = str(max(self.settings.no_of_regs, 1))
         self.controls.data_format_dropdown.value = _format_from_base(self.settings.base)
 
     def _sync_settings_from_controls(self) -> None:
         self.settings.modbus_mode = 1 if self._mode() == _MODE_TCP else 0
-        self.settings.slave_id = _parse_int(self.controls.slave_field.value, self.settings.slave_id)
-        self.settings.scan_rate = _parse_int(self.controls.scan_rate_field.value, self.settings.scan_rate)
+        self.settings.slave_id = _parse_int(
+            self.controls.slave_field.value, self.settings.slave_id
+        )
+        self.settings.scan_rate = _parse_int(
+            self.controls.scan_rate_field.value, self.settings.scan_rate
+        )
         self.settings.function_code = _function_index(self._function_spec().code)
         self.settings.start_addr = self._start_address()
-        self.settings.no_of_regs = _parse_int(self.controls.qty_field.value, self.settings.no_of_regs)
+        self.settings.no_of_regs = _parse_int(
+            self.controls.qty_field.value, self.settings.no_of_regs
+        )
         self.settings.base = _base_to_settings_value(self._data_base())
 
     def _run_worker(
@@ -913,7 +952,9 @@ class MainViewController:
         return ConnectionRequest(
             mode=mode,
             slave_ip=self.settings.slave_ip,
-            tcp_port=_parse_tcp_port(self.settings.tcp_port) if mode == _MODE_TCP else 502,
+            tcp_port=_parse_tcp_port(self.settings.tcp_port)
+            if mode == _MODE_TCP
+            else 502,
             timeout=self.settings.time_out,
             serial_port_name=self.settings.serial_port_name,
             baud=_parse_int(self.settings.baud, 9600),
@@ -962,8 +1003,12 @@ class MainViewController:
         # Fixed base-address rule: manual reads/writes and scan both subtract
         # Base Addr before sending the request, correcting qModMaster's mismatch.
         self.comm.start_addr = max(0, requested_start - base_addr)
-        self.comm.num_items = _clamp_quantity(_parse_int(self.controls.qty_field.value, spec.min_qty), spec)
-        self.comm.scan_rate = max(_parse_int(self.controls.scan_rate_field.value, 1000), 1)
+        self.comm.num_items = _clamp_quantity(
+            _parse_int(self.controls.qty_field.value, spec.min_qty), spec
+        )
+        self.comm.scan_rate = max(
+            _parse_int(self.controls.scan_rate_field.value, 1000), 1
+        )
         self.controls.qty_field.value = str(self.comm.num_items)
 
     def _collect_write_values(self) -> bool:
@@ -1012,7 +1057,9 @@ class MainViewController:
 
     def _build_grid(self) -> ft.DataTable:
         spec = self._function_spec()
-        qty = _clamp_quantity(_parse_int(self.controls.qty_field.value, spec.min_qty), spec)
+        qty = _clamp_quantity(
+            _parse_int(self.controls.qty_field.value, spec.min_qty), spec
+        )
         self.controls.qty_field.value = str(qty)
         return build_grid(
             self._start_address(),
@@ -1093,7 +1140,9 @@ def build_main_view(
         The root Flet control. Its ``data`` points to ``MainViewController`` for
         smoke tests and later app wiring.
     """
-    controller = MainViewController(page, settings if settings is not None else Settings(), comm)
+    controller = MainViewController(
+        page, settings if settings is not None else Settings(), comm
+    )
     return controller.root
 
 
@@ -1139,8 +1188,6 @@ def _base_to_settings_value(base: Base) -> int:
             assert_never(unreachable)
 
 
-
-
 def _function_index(code: int) -> int:
     for index, spec in enumerate(_FUNCTION_SPECS):
         if spec.code == code:
@@ -1163,7 +1210,9 @@ def _parse_tcp_port(raw: str) -> int:
     try:
         return int(raw)
     except ValueError as exc:
-        raise ValueError("Connection failed: TCP port must be a number (1..65535).") from exc
+        raise ValueError(
+            "Connection failed: TCP port must be a number (1..65535)."
+        ) from exc
 
 
 def _parity_char(raw: str) -> str:
