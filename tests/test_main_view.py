@@ -299,6 +299,71 @@ def test_menu_about_opens_dialog_with_current_flet_api() -> None:
     assert page.dialog.title == "About fModMaster"
 
 
+def test_file_menu_contains_new_session() -> None:
+    view = build_main_view(FakePage(), settings=Settings(), comm=FakeComm())
+
+    assert isinstance(view, ft.Column)
+    main_content = view.controls[0]
+    assert isinstance(main_content, ft.Column)
+    menu_bar = main_content.controls[0]
+    assert isinstance(menu_bar, ft.MenuBar)
+    file_menu = menu_bar.controls[0]
+    assert isinstance(file_menu, ft.SubmenuButton)
+
+    assert [button.content for button in file_menu.controls] == [
+        "New Session",
+        "Load Session",
+        "Save Session",
+    ]
+
+
+def test_new_session_resets_session_fields_and_preserves_connection_settings() -> None:
+    settings = Settings()
+    settings.slave_ip = "10.6.6.1"
+    settings.tcp_port = "1502"
+    settings.modbus_mode = 1
+    settings.slave_id = 7
+    settings.scan_rate = 250
+    settings.function_code = 3
+    settings.start_addr = 99
+    settings.no_of_regs = 10
+    settings.base = 16
+    settings.default_base = 16
+    settings.float_endian = 2
+    settings.register_formats = {0: 3, 2: 16}
+    settings.register_float_endians = {0: 1}
+    comm = FakeComm()
+    comm.values = [1, 2, 3]
+    comm.valid = False
+    controller, _, page = _build_controller_with(comm, settings)
+
+    controller._menu_handler("New Session")()
+
+    assert settings.slave_ip == "10.6.6.1"
+    assert settings.tcp_port == "1502"
+    assert settings.modbus_mode == 0
+    assert settings.slave_id == 1
+    assert settings.scan_rate == 1000
+    assert settings.function_code == 0
+    assert settings.start_addr == 0
+    assert settings.no_of_regs == 0
+    assert settings.base == 1
+    assert settings.default_base == 1
+    assert settings.float_endian == 0
+    assert settings.register_formats == {}
+    assert settings.register_float_endians == {}
+    assert comm.values == []
+    assert comm.valid is True
+    assert controller.controls.mode_dropdown.value == "RTU"
+    assert controller.controls.slave_field.value == "1"
+    assert controller.controls.scan_rate_field.value == "1000"
+    assert controller.controls.function_dropdown.value == "1"
+    assert controller.controls.start_addr_field.value == "0"
+    assert controller.controls.qty_field.value == "1"
+    assert controller.controls.data_format_dropdown.value == "Dec"
+    assert page.update_count >= 1
+
+
 def test_log_file_uses_file_uri_when_opening(monkeypatch, tmp_path) -> None:
     opened: list[str] = []
 

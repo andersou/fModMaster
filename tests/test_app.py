@@ -80,7 +80,7 @@ def test_load_startup_settings_missing_ini_uses_defaults(tmp_path, monkeypatch) 
     settings = load_startup_settings()
 
     assert settings.tcp_port == "502"
-    assert settings.slave_ip == "127.000.000.001"
+    assert settings.slave_ip == "127.0.0.1"
     assert settings.time_out == "0"
 
 
@@ -116,7 +116,7 @@ def test_load_startup_settings_corrupt_ini_warns_and_uses_defaults(
     settings = load_startup_settings(ini_path)
 
     assert settings.tcp_port == "502"
-    assert settings.slave_ip == "127.000.000.001"
+    assert settings.slave_ip == "127.0.0.1"
     assert warnings == [f"Settings file {ini_path} is corrupt; using defaults"]
 
 

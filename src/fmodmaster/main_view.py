@@ -464,7 +464,7 @@ class MainViewController:
     def _build_menu_bar(self) -> ft.MenuBar:
         return ft.MenuBar(
             controls=[
-                self._submenu("File", ["Load Session", "Save Session"]),
+                self._submenu("File", ["New Session", "Load Session", "Save Session"]),
                 self._submenu("Options", ["Modbus RTU", "Modbus TCP", "Settings"]),
                 self._submenu("View", ["Log File", "Bus Monitor"]),
                 self._submenu(
@@ -600,6 +600,7 @@ class MainViewController:
 
     def _menu_handler(self, label: str) -> Callable[..., None]:
         handlers: dict[str, Callable[..., None]] = {
+            "New Session": self._new_session_clicked,
             "Load Session": self._load_session_clicked,
             "Save Session": self._save_session_clicked,
             "Connect": self._on_connect_click,
@@ -879,6 +880,25 @@ class MainViewController:
             return
         if not _open_local_path(manual_path):
             self._show_snackbar(f"Could not open Modbus manual: {manual_path}")
+
+    def _new_session_clicked(self, *_: Any) -> None:
+        defaults = Settings()
+        self.settings.modbus_mode = defaults.modbus_mode
+        self.settings.slave_id = defaults.slave_id
+        self.settings.scan_rate = defaults.scan_rate
+        self.settings.function_code = defaults.function_code
+        self.settings.start_addr = defaults.start_addr
+        self.settings.no_of_regs = defaults.no_of_regs
+        self.settings.base = defaults.base
+        self.settings.default_base = defaults.default_base
+        self.settings.float_endian = defaults.float_endian
+        self.settings.register_formats.clear()
+        self.settings.register_float_endians.clear()
+        self.comm.values = []
+        self.comm.valid = True
+        self._load_main_fields_from_settings()
+        self._refresh_controls(rebuild_grid=True)
+        self.page.update()
 
     def _load_session_clicked(self, *_: Any) -> None:
         self.page.run_task(self._load_session_async)

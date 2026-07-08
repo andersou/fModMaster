@@ -62,7 +62,7 @@ class Settings:
 
         # [TCP]
         self.tcp_port: str = "502"
-        self.slave_ip: str = "127.000.000.001"
+        self.slave_ip: str = "127.0.0.1"
 
         # [RTU]
         self.serial_dev: str = "COM" if win else "/dev/ttyS"

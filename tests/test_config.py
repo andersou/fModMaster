@@ -34,7 +34,7 @@ def ses_path(tmp_path):
 def test_defaults_match_cpp(ini_path):
     s = Settings()
     assert s.tcp_port == "502"
-    assert s.slave_ip == "127.000.000.001"
+    assert s.slave_ip == "127.0.0.1"
     assert s.serial_port == "1"
     assert s.baud == "9600"
     assert s.data_bits == "8"
@@ -231,7 +231,7 @@ def test_session_load_missing_file_keeps_defaults(ses_path):
     s = Settings()
     s.load_session(ses_path)
     assert s.tcp_port == "502"
-    assert s.slave_ip == "127.000.000.001"
+    assert s.slave_ip == "127.0.0.1"
 
 
 # --------------------------------------------------------------------------- #
@@ -247,7 +247,7 @@ def test_corrupt_ini_missing_sections_falls_back(ini_path):
     s.load_settings(ini_path)
     # Defaults untouched.
     assert s.tcp_port == "502"
-    assert s.slave_ip == "127.000.000.001"
+    assert s.slave_ip == "127.0.0.1"
     assert s.slave_id == 1
 
 
@@ -257,7 +257,7 @@ def test_corrupt_ini_garbage_falls_back(ini_path):
     s = Settings()
     s.load_settings(ini_path)
     assert s.tcp_port == "502"
-    assert s.slave_ip == "127.000.000.001"
+    assert s.slave_ip == "127.0.0.1"
 
 
 def test_partial_ini_overlays_only_present_keys(ini_path):
@@ -267,7 +267,7 @@ def test_partial_ini_overlays_only_present_keys(ini_path):
     s.load_settings(ini_path)
     assert s.tcp_port == "9999"
     # SlaveIP absent -> default retained.
-    assert s.slave_ip == "127.000.000.001"
+    assert s.slave_ip == "127.0.0.1"
     # Other sections absent -> defaults retained.
     assert s.slave_id == 1
     assert s.baud == "9600"
@@ -284,5 +284,5 @@ def test_acceptance_one_liner(ini_path):
     s2 = Settings()
     s2.load_settings(ini_path)
     assert s2.tcp_port == "502"
-    assert s2.slave_ip == "127.000.000.001"
+    assert s2.slave_ip == "127.0.0.1"
     assert s2.strip_ip("127.000.000.001") == "127.0.0.1"
