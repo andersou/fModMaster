@@ -441,15 +441,20 @@ class MainViewController:
 
     def _build_layout(self) -> ft.Control:
         self.page.appbar = ft.AppBar(title="fModMaster")
-        content = ft.Column(
+        main_content = ft.Column(
             controls=[
                 self._build_menu_bar(),
                 self._build_toolbar(),
                 self._communication_area(),
                 self._request_area(),
                 self.controls.grid_host,
-                self._status_bar(),
             ],
+            spacing=12,
+            expand=True,
+            scroll=ft.ScrollMode.AUTO,
+        )
+        content = ft.Column(
+            controls=[main_content, self._status_bar()],
             spacing=12,
             expand=True,
         )

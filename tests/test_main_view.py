@@ -158,6 +158,27 @@ def test_build_starts_disconnected_with_transactions_disabled() -> None:
     assert controls.scan_rate_field.disabled is False
 
 
+def test_status_bar_is_fixed_below_expanding_content() -> None:
+    view = build_main_view(FakePage(), settings=Settings(), comm=FakeComm())
+
+    assert isinstance(view, ft.Column)
+    assert view.expand is True
+    assert len(view.controls) == 2
+    content = view.controls[0]
+    status_bar = view.controls[1]
+    assert isinstance(content, ft.Column)
+    assert content.expand is True
+    assert content.scroll == ft.ScrollMode.AUTO
+    assert isinstance(status_bar, ft.Row)
+    assert status_bar.controls == [
+        view.data.controls.connection_status,
+        view.data.controls.base_addr_status,
+        view.data.controls.packets_status,
+        view.data.controls.errors_status,
+    ]
+    assert content.controls[-1] is view.data.controls.grid_host
+
+
 def test_mode_switch_flips_slave_label() -> None:
     controller, _, _ = _build_controller()
     controls = controller.controls

@@ -8,6 +8,7 @@ be exercised with a fake page instead of a real desktop window.
 from __future__ import annotations
 
 import configparser
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -54,6 +55,7 @@ def create_app(page: Any, settings_path: str | Path | None = None) -> App:
     settings = load_startup_settings(settings_path)
     root = build_main_view(cast(PageLike, page), settings=settings)
     page.add(root)
+    _center_desktop_window(page)
     logger.info("fModMaster window initialized")
     return App(page=page, settings=settings, root=root)
 
@@ -122,3 +124,24 @@ def _safe_setattr(target: Any, name: str, value: int) -> None:
         setattr(target, name, value)
     except (AttributeError, TypeError):
         return
+
+
+def _center_desktop_window(page: Any) -> None:
+    window = getattr(page, "window", None)
+    if window is None or not callable(getattr(window, "center", None)):
+        return
+    run_task = getattr(page, "run_task", None)
+    if callable(run_task):
+        run_task(_center_desktop_window_async, window)
+
+
+async def _center_desktop_window_async(window: Any) -> None:
+    wait_until_ready = getattr(window, "wait_until_ready_to_show", None)
+    if callable(wait_until_ready):
+        result = wait_until_ready()
+        if inspect.isawaitable(result):
+            await result
+    center = getattr(window, "center")
+    result = center()
+    if inspect.isawaitable(result):
+        await result

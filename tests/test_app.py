@@ -30,6 +30,14 @@ class FakeWindow:
         self.height = 0
         self.min_width = 0
         self.min_height = 0
+        self.ready_count = 0
+        self.center_count = 0
+
+    async def wait_until_ready_to_show(self) -> None:
+        self.ready_count += 1
+
+    async def center(self) -> None:
+        self.center_count += 1
 
 
 class FakePage:
@@ -126,6 +134,8 @@ def test_create_app_configures_desktop_page_and_main_view(tmp_path) -> None:
     assert page.window.height == DEFAULT_WINDOW_HEIGHT
     assert page.window.min_width == MIN_WINDOW_WIDTH
     assert page.window.min_height == MIN_WINDOW_HEIGHT
+    assert page.window.ready_count == 1
+    assert page.window.center_count == 1
     assert page.controls == [app.root]
     assert app.settings.scan_rate == 250
     assert isinstance(app.root.data, MainViewController)
