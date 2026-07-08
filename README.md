@@ -6,6 +6,7 @@ fModMaster is a desktop Modbus master application built with [Flet](https://flet
 
 - **Dual Mode Support**: Connect via Modbus RTU (serial) or Modbus TCP.
 - **Function Codes**: Read/Write Coils, Discrete Inputs, Holding Registers, and Input Registers (FC 01–06, 0F, 10).
+- **Float (IEEE 754) Support**: Display and write register pairs as 32-bit floats with selectable byte/word order — ABCD (BE_BE), DCBA (LE_LE), BADC (BE_LE), CDAB (LE_BE), mirroring the libmodbus `modbus_get_float_*` family. Endianness is persisted in INI/session files (`FloatEndian`).
 - **Scan Mode**: Continuous polling with configurable scan rate.
 - **Bus Monitor**: Real-time raw Tx/Rx frame inspection.
 - **Session Management**: Save and load complete session configurations (`.ses` files).
