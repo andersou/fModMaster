@@ -211,3 +211,52 @@ def test_open_and_close_subscribe_and_restore_on_raw() -> None:
     assert previous_calls == [("tx", b"abc")]
     assert controller.model.capture_enabled is False
     assert dialog.open is False
+
+
+class FakeCommWithModel:
+    """FakeComm variant that owns a persistent bus_monitor_model like ModbusComm."""
+
+    def __init__(self) -> None:
+        self.mode: str | None = "RTU"
+        self.on_raw: Callable[[str, bytes], None] | None = None
+        self.bus_monitor_model = BusMonitorModel(max_lines=60)
+
+
+def test_transactions_captured_while_dialog_closed() -> None:
+    comm = FakeCommWithModel()
+    comm.bus_monitor_model.add_raw("tx", b"\x01\x03\x01\x00\x00\x02", mode="RTU")
+    comm.bus_monitor_model.add_raw("rx", b"\x01\x03\x04\x00\x0A\x00\x14", mode="RTU")
+
+    page = FakePage()
+    controller = BusMonitorController(page, comm, _settings())
+    controller.open()
+
+    assert len(controller.model.lines) == 2
+    assert controller.model.lines[0].line_type == "Tx"
+    assert controller.model.lines[1].line_type == "Rx"
+
+
+def test_no_data_loss_on_close() -> None:
+    comm = FakeCommWithModel()
+    page = FakePage()
+    controller = BusMonitorController(page, comm, _settings())
+    controller.open()
+    comm.bus_monitor_model.add_raw("tx", b"\x01\x03\x01\x00\x00\x02", mode="RTU")
+
+    controller.close()
+
+    assert len(comm.bus_monitor_model.lines) == 1
+
+
+def test_reopen_shows_accumulated_history() -> None:
+    comm = FakeCommWithModel()
+    page = FakePage()
+    controller = BusMonitorController(page, comm, _settings())
+    controller.open()
+    comm.bus_monitor_model.add_raw("tx", b"\x01\x03", mode="RTU")
+    controller.close()
+
+    comm.bus_monitor_model.add_raw("rx", b"\x01\x03\x04", mode="RTU")
+    controller.open()
+
+    assert len(controller.model.lines) == 2

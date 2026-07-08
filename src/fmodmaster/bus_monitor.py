@@ -255,8 +255,12 @@ class BusMonitorController:
         return BusMonitorControls(raw_list, detail_text, dialog)
 
     def _on_raw(self, direction: str, data: bytes) -> None:
-        model = getattr(self.comm, "bus_monitor_model", None)
-        if model is not self.model:
+        # When the comm owns a persistent bus_monitor_model (production),
+        # _trace_packet already appended the line there, and self.model IS
+        # that model. When the comm has no such attribute (tests with
+        # FakeComm), self.model is a standalone model we must feed here.
+        comm_model = getattr(self.comm, "bus_monitor_model", None)
+        if comm_model is not self.model:
             self.model.add_raw(direction, bytes(data), mode=self.comm.mode)
         self.page.run_task(self._append_raw_async)
 

@@ -5,10 +5,12 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 
 import flet as ft
+import serial.tools.list_ports
 
 from fmodmaster.config import Settings
 from fmodmaster.main_view import MainViewController, build_main_view
 import fmodmaster.main_view as main_view
+from fmodmaster.main_view import _serial_port_options, _split_serial_port_name
 from fmodmaster.registers import Base, FloatEndian, RegistersModel
 
 
@@ -302,6 +304,74 @@ def test_menu_about_opens_dialog_with_current_flet_api() -> None:
     assert page.dialog is not None
     assert page.dialog.open is True
     assert page.dialog.title == "About fModMaster"
+
+
+class FakePort:
+    def __init__(self, device: str, description: str) -> None:
+        self.device = device
+        self.description = description
+
+
+def test_menu_modbus_rtu_opens_dialog_with_serial_dropdown(monkeypatch) -> None:
+    monkeypatch.setattr(
+        serial.tools.list_ports,
+        "comports",
+        lambda: [FakePort("/dev/ttyUSB0", "USB Serial")],
+    )
+    controller, _, page = _build_controller()
+
+    controller._menu_handler("Modbus RTU")()
+
+    assert page.show_dialog_count == 1
+    assert page.dialog is not None
+    assert page.dialog.title == "Modbus RTU Settings"
+    dialog_data = page.dialog.data
+    assert isinstance(dialog_data.serial_port, ft.Dropdown)
+    assert dialog_data.serial_port.editable is True
+    assert any(option.key == "/dev/ttyUSB0" for option in dialog_data.serial_port.options)
+
+
+def test_rtu_settings_save_updates_serial_port_name(monkeypatch) -> None:
+    monkeypatch.setattr(
+        serial.tools.list_ports,
+        "comports",
+        lambda: [FakePort("/dev/ttyUSB0", "USB Serial")],
+    )
+    settings = FakeSettings()
+    settings.serial_port_name = "/dev/ttyS0"
+    controller, _, page = _build_controller_with(FakeComm(), settings)
+
+    controller._menu_handler("Modbus RTU")()
+    dialog_data = page.dialog.data
+    dialog_data.serial_port.value = "/dev/ttyUSB0"
+    ok_button = page.dialog.actions[0]
+    ok_button.on_click(None)
+
+    assert settings.serial_port_name == "/dev/ttyUSB0"
+    assert settings.serial_dev == "/dev/ttyUSB"
+    assert settings.serial_port == "0"
+    assert settings.save_count >= 1
+
+
+def test_split_serial_port_name_maps_common_ports() -> None:
+    assert _split_serial_port_name("COM1") == ("COM", "1")
+    assert _split_serial_port_name("COM10") == ("COM", "10")
+    assert _split_serial_port_name("/dev/ttyS0") == ("/dev/ttyS", "1")
+    assert _split_serial_port_name("/dev/ttyUSB0") == ("/dev/ttyUSB", "0")
+    assert _split_serial_port_name("\\\\.\\COM10") == ("COM", "10")
+
+
+def test_serial_port_options_uses_pyserial(monkeypatch) -> None:
+    monkeypatch.setattr(
+        serial.tools.list_ports,
+        "comports",
+        lambda: [FakePort("/dev/ttyTEST1", "Test Device")],
+    )
+
+    options = _serial_port_options()
+
+    assert len(options) == 1
+    assert options[0].key == "/dev/ttyTEST1"
 
 
 def test_file_menu_contains_new_session() -> None:

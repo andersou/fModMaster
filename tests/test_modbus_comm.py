@@ -304,3 +304,39 @@ class TestOfflineTimeoutCoercion:
         comm = ModbusComm(page=FakePage())
         comm.connect_tcp("127.0.0.1", 50201, timeout=500)
         assert comm.timeout == 1.0
+
+
+# --------------------------------------------------------------------------- #
+# _trace_packet persistent capture
+# --------------------------------------------------------------------------- #
+
+
+class TestTracePacketPersistentCapture:
+    """``_trace_packet`` feeds ``bus_monitor_model`` even with no ``on_raw`` subscriber."""
+
+    def test_trace_captures_tx_with_no_on_raw(self) -> None:
+        comm = ModbusComm(page=FakePage())
+        comm.mode = "RTU"
+        comm._trace_packet(sending=True, data=b"\x01\x03\x01\x00\x00\x02")
+
+        assert len(comm.bus_monitor_model.lines) == 1
+        assert comm.bus_monitor_model.lines[0].line_type == "Tx"
+
+    def test_trace_captures_rx_with_no_on_raw(self) -> None:
+        comm = ModbusComm(page=FakePage())
+        comm.mode = "RTU"
+        comm._trace_packet(sending=False, data=b"\x01\x03\x04\x00\x0A")
+
+        assert len(comm.bus_monitor_model.lines) == 1
+        assert comm.bus_monitor_model.lines[0].line_type == "Rx"
+
+    def test_trace_still_invokes_on_raw(self) -> None:
+        comm = ModbusComm(page=FakePage())
+        comm.mode = "RTU"
+        calls: list[tuple[str, bytes]] = []
+        comm.on_raw = lambda d, b: calls.append((d, b))
+
+        comm._trace_packet(sending=True, data=b"\x01\x03")
+
+        assert calls == [("tx", b"\x01\x03")]
+        assert len(comm.bus_monitor_model.lines) == 1

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Final, Protocol, assert_never
 
 import flet as ft
+import serial.tools.list_ports
 
 from .bus_monitor import BusMonitorController, build_bus_monitor_dialog
 from .config import Settings
@@ -121,6 +122,7 @@ class CommLike(Protocol):
     write_values: list[Any]
     valid: bool
     on_raw: Callable[[str, bytes], None] | None
+    bus_monitor_model: Any
 
     def connect_rtu(
         self,
@@ -213,8 +215,7 @@ class ConnectionRequest:
 
 @dataclass(slots=True)  # noqa: MUTABLE_OK - exposes mutable dialog fields to tests.
 class RtuSettingsDialogData:
-    serial_dev: ft.TextField
-    serial_port: ft.TextField
+    serial_port: ft.Dropdown
     baud: ft.TextField
     data_bits: ft.TextField
     stop_bits: ft.TextField
@@ -338,6 +339,36 @@ def _labeled_field(label: str | ft.Text, control: ft.Control) -> ft.Column:
         spacing=4,
         horizontal_alignment=ft.CrossAxisAlignment.START,
     )
+
+
+def _serial_port_options() -> list[ft.DropdownOption]:
+    return [
+        ft.DropdownOption(
+            key=port.device,
+            content=ft.Text(
+                value=f"{port.device} — {port.description or 'unknown'}",
+                no_wrap=False,
+            ),
+        )
+        for port in serial.tools.list_ports.comports()
+    ]
+
+
+def _split_serial_port_name(port_name: str) -> tuple[str, str]:
+    cleaned = port_name.removeprefix("\\\\.\\")
+    digits = _trailing_digits(cleaned)
+    prefix = cleaned[: -len(digits)] if digits else cleaned
+    number = digits or "1"
+    if prefix.startswith("/dev/ttyS") and digits:
+        number = str(int(digits) + 1)
+    return prefix, number
+
+
+def _trailing_digits(value: str) -> str:
+    length = len(value)
+    while length > 0 and value[length - 1].isdigit():
+        length -= 1
+    return value[length:]
 
 
 class MainViewController:
@@ -714,11 +745,11 @@ class MainViewController:
 
     def _show_rtu_settings(self, *_: Any) -> None:
         data = RtuSettingsDialogData(
-            serial_dev=ft.TextField(
-                value=self.settings.serial_dev, label="Serial device"
-            ),
-            serial_port=ft.TextField(
-                value=self.settings.serial_port, label="Serial port"
+            serial_port=ft.Dropdown(
+                value=self.settings.serial_port_name,
+                editable=True,
+                label="Serial Port",
+                options=_serial_port_options(),
             ),
             baud=ft.TextField(value=self.settings.baud, label="Baud"),
             data_bits=ft.TextField(value=self.settings.data_bits, label="Data Bits"),
@@ -728,13 +759,10 @@ class MainViewController:
         )
 
         def save(*_: Any) -> None:
-            self.settings.serial_dev = data.serial_dev.value or self.settings.serial_dev
-            self.settings.serial_port = (
-                data.serial_port.value or self.settings.serial_port
-            )
-            self.settings.serial_port_name = Settings._compute_serial_port_name(
-                self.settings.serial_dev,
-                self.settings.serial_port,
+            port_name = data.serial_port.value or self.settings.serial_port_name
+            self.settings.serial_port_name = port_name
+            self.settings.serial_dev, self.settings.serial_port = (
+                _split_serial_port_name(port_name)
             )
             self.settings.baud = data.baud.value or self.settings.baud
             self.settings.data_bits = data.data_bits.value or self.settings.data_bits
@@ -749,7 +777,6 @@ class MainViewController:
                 "Modbus RTU Settings",
                 ft.Column(
                     [
-                        data.serial_dev,
                         data.serial_port,
                         data.baud,
                         data.data_bits,

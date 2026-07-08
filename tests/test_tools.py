@@ -289,8 +289,7 @@ def test_rtu_settings_dialog_saves_values_back_to_settings_and_ini(
     controller._show_rtu_settings()
     assert page.dialog is not None
     assert isinstance(page.dialog.data, RtuSettingsDialogData)
-    page.dialog.data.serial_dev.value = "/dev/ttyUSB"
-    page.dialog.data.serial_port.value = "2"
+    page.dialog.data.serial_port.value = "/dev/ttyUSB2"
     page.dialog.data.baud.value = "19200"
     page.dialog.data.data_bits.value = "7"
     page.dialog.data.stop_bits.value = "2"
@@ -300,6 +299,7 @@ def test_rtu_settings_dialog_saves_values_back_to_settings_and_ini(
 
     loaded = Settings()
     loaded.load_settings()
+    assert settings.serial_port_name == "/dev/ttyUSB2"
     assert settings.serial_dev == "/dev/ttyUSB"
     assert settings.serial_port == "2"
     assert settings.baud == "19200"
