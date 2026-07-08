@@ -181,19 +181,19 @@ class MainViewControls:
     data_format_dropdown: ft.Dropdown
     signed_checkbox: ft.Checkbox
     grid_host: ft.Container
-    load_session_button: ft.Button
-    save_session_button: ft.Button
-    connect_button: ft.Button
-    read_write_button: ft.Button
-    scan_button: ft.Button
-    clear_table_button: ft.Button
-    reset_counters_button: ft.Button
-    log_file_button: ft.Button
-    bus_monitor_button: ft.Button
-    tools_button: ft.Button
-    settings_button: ft.Button
-    about_button: ft.Button
-    exit_button: ft.Button
+    load_session_button: ft.OutlinedButton
+    save_session_button: ft.OutlinedButton
+    connect_button: ft.OutlinedButton
+    read_write_button: ft.OutlinedButton
+    scan_button: ft.OutlinedButton
+    clear_table_button: ft.OutlinedButton
+    reset_counters_button: ft.OutlinedButton
+    log_file_button: ft.OutlinedButton
+    bus_monitor_button: ft.OutlinedButton
+    tools_button: ft.OutlinedButton
+    settings_button: ft.OutlinedButton
+    about_button: ft.OutlinedButton
+    exit_button: ft.OutlinedButton
     connection_status: ft.Text
     base_addr_status: ft.Text
     packets_status: ft.Text
@@ -325,6 +325,18 @@ _FUNCTION_SPECS: Final = (
 _SPECS_BY_CODE: Final = {spec.code: spec for spec in _FUNCTION_SPECS}
 
 
+def _labeled_field(label: str | ft.Text, control: ft.Control) -> ft.Column:
+    label_control = label if isinstance(label, ft.Text) else ft.Text(label, size=12, weight=ft.FontWeight.W_500)
+    return ft.Column(
+        controls=[
+            label_control,
+            control,
+        ],
+        spacing=4,
+        horizontal_alignment=ft.CrossAxisAlignment.START,
+    )
+
+
 class MainViewController:
     def __init__(
         self,
@@ -356,29 +368,29 @@ class MainViewController:
         return MainViewControls(
             mode_dropdown=ft.Dropdown(
                 value=mode,
-                label="Modbus Mode",
                 width=160,
+                height=48,
                 options=[
                     ft.DropdownOption(key=_MODE_RTU, text="RTU"),
                     ft.DropdownOption(key=_MODE_TCP, text="TCP"),
                 ],
             ),
             slave_label=ft.Text("Slave Addr"),
-            slave_field=ft.TextField(value=str(self.settings.slave_id), width=120),
+            slave_field=ft.TextField(value=str(self.settings.slave_id), width=120, height=48),
             scan_rate_field=ft.TextField(
-                value=str(self.settings.scan_rate), label="Scan Rate (ms)", width=160
+                value=str(self.settings.scan_rate), width=160, height=48
             ),
             function_dropdown=ft.Dropdown(
                 value=str(fc),
-                label="Function Code",
                 width=260,
+                height=48,
                 options=[
                     ft.DropdownOption(key=str(spec.code), text=spec.name)
                     for spec in _FUNCTION_SPECS
                 ],
             ),
             start_addr_field=ft.TextField(
-                value=str(self.settings.start_addr), label="Start Address", width=160
+                value=str(self.settings.start_addr), width=160, height=48
             ),
             address_base_toggle=ft.SegmentedButton(
                 segments=[
@@ -388,11 +400,11 @@ class MainViewController:
                 selected=[_ADDR_DEC],
             ),
             qty_label=ft.Text(_SPECS_BY_CODE[fc].quantity_label),
-            qty_field=ft.TextField(value=str(qty), width=140),
+            qty_field=ft.TextField(value=str(qty), width=140, height=48),
             data_format_dropdown=ft.Dropdown(
                 value=data_format,
-                label="Data Format",
                 width=150,
+                height=48,
                 options=[
                     ft.DropdownOption(key=_FORMAT_BIN, text="Bin"),
                     ft.DropdownOption(key=_FORMAT_DEC, text="Dec"),
@@ -401,19 +413,19 @@ class MainViewController:
             ),
             signed_checkbox=ft.Checkbox(label="Signed", value=False),
             grid_host=grid_host,
-            load_session_button=ft.Button("Load Session"),
-            save_session_button=ft.Button("Save Session"),
-            connect_button=ft.Button("Connect"),
-            read_write_button=ft.Button("Read / Write"),
-            scan_button=ft.Button("Scan"),
-            clear_table_button=ft.Button("Clear Table"),
-            reset_counters_button=ft.Button("Reset Counters"),
-            log_file_button=ft.Button("Log File"),
-            bus_monitor_button=ft.Button("Bus Monitor"),
-            tools_button=ft.Button("Tools"),
-            settings_button=ft.Button("Settings"),
-            about_button=ft.Button("About"),
-            exit_button=ft.Button("Exit"),
+            load_session_button=ft.OutlinedButton("Load Session"),
+            save_session_button=ft.OutlinedButton("Save Session"),
+            connect_button=ft.OutlinedButton("Connect"),
+            read_write_button=ft.OutlinedButton("Read / Write"),
+            scan_button=ft.OutlinedButton("Scan"),
+            clear_table_button=ft.OutlinedButton("Clear Table"),
+            reset_counters_button=ft.OutlinedButton("Reset Counters"),
+            log_file_button=ft.OutlinedButton("Log File"),
+            bus_monitor_button=ft.OutlinedButton("Bus Monitor"),
+            tools_button=ft.OutlinedButton("Tools"),
+            settings_button=ft.OutlinedButton("Settings"),
+            about_button=ft.OutlinedButton("About"),
+            exit_button=ft.OutlinedButton("Exit"),
             connection_status=ft.Text(),
             base_addr_status=ft.Text(),
             packets_status=ft.Text(),
@@ -458,55 +470,70 @@ class MainViewController:
         c = self.controls
         return ft.Row(
             controls=[
-                c.connect_button,
-                c.read_write_button,
-                c.scan_button,
-                c.clear_table_button,
-                c.reset_counters_button,
-                c.log_file_button,
-                c.bus_monitor_button,
-                c.settings_button,
-                c.exit_button,
+                ft.Container(c.connect_button, height=40),
+                ft.Container(c.read_write_button, height=40),
+                ft.Container(c.scan_button, height=40),
+                ft.Container(c.clear_table_button, height=40),
+                ft.Container(c.reset_counters_button, height=40),
+                ft.Container(c.log_file_button, height=40),
+                ft.Container(c.bus_monitor_button, height=40),
+                ft.Container(c.settings_button, height=40),
+                ft.Container(c.exit_button, height=40),
             ],
             wrap=True,
             spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-    def _communication_area(self) -> ft.Column:
+    def _communication_area(self) -> ft.Control:
         c = self.controls
-        return ft.Column(
-            controls=[
-                ft.Text("Communication"),
-                ft.Row(
-                    controls=[
-                        c.mode_dropdown,
-                        ft.Column([c.slave_label, c.slave_field], spacing=2),
-                        c.scan_rate_field,
-                    ],
-                    wrap=True,
-                ),
-            ],
-            spacing=6,
+        return ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.Text("Communication", weight=ft.FontWeight.W_500),
+                    ft.Row(
+                        controls=[
+                            _labeled_field("Modbus Mode", c.mode_dropdown),
+                            _labeled_field(c.slave_label, c.slave_field),
+                            _labeled_field("Scan Rate (ms)", c.scan_rate_field),
+                        ],
+                        wrap=True,
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.END,
+                    ),
+                ],
+                spacing=8,
+            ),
+            padding=12,
+            border_radius=8,
+            bgcolor=ft.Colors.SURFACE_CONTAINER,
         )
 
-    def _request_area(self) -> ft.Column:
+    def _request_area(self) -> ft.Control:
         c = self.controls
-        return ft.Column(
-            controls=[
-                ft.Text("Request"),
-                ft.Row(
-                    controls=[
-                        c.function_dropdown,
-                        c.start_addr_field,
-                        c.address_base_toggle,
-                        ft.Column([c.qty_label, c.qty_field], spacing=2),
-                        c.data_format_dropdown,
-                        c.signed_checkbox,
-                    ],
-                    wrap=True,
-                ),
-            ],
-            spacing=6,
+        return ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.Text("Request", weight=ft.FontWeight.W_500),
+                    ft.Row(
+                        controls=[
+                            _labeled_field("Function Code", c.function_dropdown),
+                            _labeled_field("Start Address", c.start_addr_field),
+                            _labeled_field("Addr Base", c.address_base_toggle),
+                            _labeled_field(c.qty_label, c.qty_field),
+                            _labeled_field("Data Format", c.data_format_dropdown),
+                            c.signed_checkbox,
+                        ],
+                        wrap=True,
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.END,
+                    ),
+                ],
+                spacing=8,
+            ),
+            padding=12,
+            border_radius=8,
+            bgcolor=ft.Colors.SURFACE_CONTAINER,
         )
 
     def _status_bar(self) -> ft.Row:

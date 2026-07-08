@@ -62,8 +62,8 @@ class TestBuildGrid:
         assert table.rows[0].data == "12"
         unused = _text_cell(multi.rows[0].cells[0])
         assert unused.value == "x"
-        assert unused.color == ft.Colors.RED
-        assert unused.bgcolor == ft.Colors.GREY_200
+        assert unused.color == ft.Colors.ERROR
+        assert unused.bgcolor == ft.Colors.SURFACE_CONTAINER_HIGHEST
 
     def test_values_and_tooltips_render_in_display_base(self) -> None:
         table = build_grid(
@@ -83,7 +83,7 @@ class TestBuildGrid:
 
         invalid = _text_cell(table.rows[0].cells[0])
         assert invalid.value == "-/-"
-        assert invalid.color == ft.Colors.RED
+        assert invalid.color == ft.Colors.ERROR
 
 
 class TestEditing:
@@ -102,7 +102,7 @@ class TestEditing:
 
         assert result is None
         assert field.error == "Invalid value"
-        assert field.color == ft.Colors.RED
+        assert field.color == ft.Colors.ERROR
 
     def test_register_cell_rejects_value_above_uint16(self) -> None:
         table = build_grid(start_addr=0, qty=1, base=Base.Dec, signed=False, is_write=True)
