@@ -169,13 +169,18 @@ def test_status_bar_is_fixed_below_expanding_content() -> None:
     assert isinstance(content, ft.Column)
     assert content.expand is True
     assert content.scroll == ft.ScrollMode.AUTO
+    toolbar = content.controls[1]
+    assert isinstance(toolbar, ft.Row)
     assert isinstance(status_bar, ft.Row)
     assert status_bar.controls == [
         view.data.controls.connection_status,
         view.data.controls.base_addr_status,
         view.data.controls.packets_status,
         view.data.controls.errors_status,
+        view.data.controls.reset_counters_button,
     ]
+    toolbar_controls = [container.content for container in toolbar.controls]
+    assert view.data.controls.reset_counters_button not in toolbar_controls
     assert content.controls[-1] is view.data.controls.grid_host
 
 

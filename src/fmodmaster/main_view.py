@@ -499,7 +499,6 @@ class MainViewController:
                 ft.Container(c.read_write_button, height=40),
                 ft.Container(c.scan_button, height=40),
                 ft.Container(c.clear_table_button, height=40),
-                ft.Container(c.reset_counters_button, height=40),
                 ft.Container(c.log_file_button, height=40),
                 ft.Container(c.bus_monitor_button, height=40),
                 ft.Container(c.settings_button, height=40),
@@ -572,6 +571,7 @@ class MainViewController:
                 c.base_addr_status,
                 c.packets_status,
                 c.errors_status,
+                c.reset_counters_button,
             ],
             spacing=24,
         )

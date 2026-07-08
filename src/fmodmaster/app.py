@@ -21,9 +21,9 @@ from fmodmaster.main_view import PageLike, build_main_view
 
 APP_TITLE = "fModMaster"
 DEFAULT_SETTINGS_FILE = "fModMaster.ini"
-DEFAULT_WINDOW_WIDTH = 1280
+DEFAULT_WINDOW_WIDTH = 1024
 DEFAULT_WINDOW_HEIGHT = 800
-MIN_WINDOW_WIDTH = 1024
+MIN_WINDOW_WIDTH = 900
 MIN_WINDOW_HEIGHT = 700
 
 logger = get_logger(__name__)
