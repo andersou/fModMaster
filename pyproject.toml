@@ -1,7 +1,7 @@
 [project]
 name = "fmodmaster"
 version = "0.1.0"
-description = "Add your description here"
+description = "Desktop Modbus master application built with Flet"
 readme = "README.md"
 authors = [
     { name = "Anderson Souza", email = "andersom_jag@hotmail.com" }

@@ -91,6 +91,7 @@ class Settings:
         self.start_addr: int = 0
         self.no_of_regs: int = 0
         self.base: int = 1  # Dec
+        self.float_endian: int = 0  # ABCD
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -270,6 +271,11 @@ class Settings:
                     self.base = int(parser.get(self._SESSION, "Base"))
                 except ValueError:
                     pass
+            if parser.has_option(self._SESSION, "FloatEndian"):
+                try:
+                    self.float_endian = int(parser.get(self._SESSION, "FloatEndian"))
+                except ValueError:
+                    pass
 
     def _save_to_file(self, path: str) -> None:
         """Write the current state to ``path`` in INI format."""
@@ -303,6 +309,7 @@ class Settings:
             "StartAddr": str(self.start_addr),
             "NoOfRegs": str(self.no_of_regs),
             "Base": str(self.base),
+            "FloatEndian": str(self.float_endian),
         }
 
         with open(path, "w", encoding="utf-8") as fh:

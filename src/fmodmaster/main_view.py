@@ -34,7 +34,7 @@ from .modbus_comm import (
     FC_WRITE_SINGLE_REGISTER,
     ModbusComm,
 )
-from .registers import Base, RegistersModel, build_grid, is_signed_visible
+from .registers import Base, FloatEndian, RegistersModel, build_grid, is_signed_visible
 from .tools_view import ToolsController, build_tools_dialog
 
 
@@ -85,6 +85,7 @@ class SettingsLike(Protocol):
     start_addr: int
     no_of_regs: int
     base: int
+    float_endian: int
     modbus_mode: int
     time_out: str
     base_addr: str
@@ -236,6 +237,7 @@ class GeneralSettingsDialogData:
     time_out: ft.TextField
     max_no_of_lines: ft.TextField
     base_addr: ft.TextField
+    float_endian: ft.Dropdown
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +253,7 @@ _MODE_TCP: Final = "TCP"
 _FORMAT_BIN: Final = "Bin"
 _FORMAT_DEC: Final = "Dec"
 _FORMAT_HEX: Final = "Hex"
+_FORMAT_FLOAT: Final = "Float"
 _ADDR_DEC: Final = "Dec"
 _ADDR_HEX: Final = "Hex"
 _WRITE_FUNCTION_CODES: Final = frozenset(
@@ -409,6 +412,7 @@ class MainViewController:
                     ft.DropdownOption(key=_FORMAT_BIN, text="Bin"),
                     ft.DropdownOption(key=_FORMAT_DEC, text="Dec"),
                     ft.DropdownOption(key=_FORMAT_HEX, text="Hex"),
+                    ft.DropdownOption(key=_FORMAT_FLOAT, text="Float"),
                 ],
             ),
             signed_checkbox=ft.Checkbox(label="Signed", value=False),
@@ -745,6 +749,16 @@ class MainViewController:
                 label="Max No Of Bus Monitor Lines",
             ),
             base_addr=ft.TextField(value=self.settings.base_addr, label="Base Addr"),
+            float_endian=ft.Dropdown(
+                value=str(self.settings.float_endian),
+                width=220,
+                options=[
+                    ft.DropdownOption(key="0", text=FloatEndian.ABCD.label),
+                    ft.DropdownOption(key="1", text=FloatEndian.DCBA.label),
+                    ft.DropdownOption(key="2", text=FloatEndian.BADC.label),
+                    ft.DropdownOption(key="3", text=FloatEndian.CDAB.label),
+                ],
+            ),
         )
 
         def save(*_: Any) -> None:
@@ -753,6 +767,7 @@ class MainViewController:
                 data.max_no_of_lines.value or self.settings.max_no_of_lines
             )
             self.settings.base_addr = data.base_addr.value or self.settings.base_addr
+            self.settings.float_endian = _parse_int(data.float_endian.value, 0)
             self.settings.save_settings()
             self._refresh_controls(rebuild_grid=True)
             self._close_dialog()
@@ -761,7 +776,7 @@ class MainViewController:
             ModalDialogSpec(
                 "Settings",
                 ft.Column(
-                    [data.time_out, data.max_no_of_lines, data.base_addr],
+                    [data.time_out, data.max_no_of_lines, data.base_addr, data.float_endian],
                     width=420,
                     spacing=8,
                 ),
@@ -982,7 +997,8 @@ class MainViewController:
         c.qty_label.value = spec.quantity_label
         if spec.locks_quantity:
             c.qty_field.value = "1"
-        c.signed_checkbox.visible = is_signed_visible(self._data_base())
+        data_base = self._data_base()
+        c.signed_checkbox.visible = is_signed_visible(data_base)
         c.slave_label.value = "Unit ID" if self._mode() == _MODE_TCP else "Slave Addr"
         c.connection_status.value = _connection_text(connected, self.comm.mode)
         c.base_addr_status.value = f"Base Addr: {self.settings.base_addr}"
@@ -1004,6 +1020,7 @@ class MainViewController:
             is_16bit=spec.is_16bit,
             values=self.comm.values,
             valid=self.comm.valid,
+            float_endian=self._float_endian(),
         )
 
     def _show_snackbar(self, message: str) -> None:
@@ -1034,8 +1051,16 @@ class MainViewController:
                 return Base.Dec
             case "Hex":
                 return Base.Hex
+            case "Float":
+                return Base.Float
             case _:
                 return Base.Dec
+
+    def _float_endian(self) -> FloatEndian:
+        try:
+            return FloatEndian(self.settings.float_endian)
+        except ValueError:
+            return FloatEndian.ABCD
 
     def _start_address(self) -> int:
         raw = self.controls.start_addr_field.value or "0"
@@ -1091,6 +1116,8 @@ def _format_from_base(raw: int) -> str:
             return _FORMAT_DEC
         case Base.Hex:
             return _FORMAT_HEX
+        case Base.Float:
+            return _FORMAT_FLOAT
         case unreachable:
             assert_never(unreachable)
 
@@ -1103,8 +1130,12 @@ def _base_to_settings_value(base: Base) -> int:
             return 1
         case Base.Hex:
             return 0
+        case Base.Float:
+            return 3
         case unreachable:
             assert_never(unreachable)
+
+
 
 
 def _function_index(code: int) -> int:

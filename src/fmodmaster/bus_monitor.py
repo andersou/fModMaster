@@ -22,6 +22,18 @@ _MULTI_WRITE_FUNCTIONS: Final = frozenset({0x0F, 0x10})
 _EMPTY_DETAIL: Final = "Select a raw line to decode ADU/PDU fields."
 
 
+def _file_picker_for_page(page: PageLike) -> ft.FilePicker:
+    overlay = getattr(page, "overlay", None)
+    if isinstance(overlay, list):
+        for control in overlay:
+            if isinstance(control, ft.FilePicker):
+                return control
+    picker = ft.FilePicker()
+    if isinstance(overlay, list):
+        overlay.append(picker)
+    return picker
+
+
 class PageLike(Protocol):
     dialog: ft.AlertDialog | None
     overlay: list[Any]
@@ -220,9 +232,7 @@ class BusMonitorController:
     def _build_controls(self) -> BusMonitorControls:
         raw_list = ft.ListView(expand=True, height=260, spacing=2, auto_scroll=True)
         detail_text = ft.Text(_EMPTY_DETAIL, selectable=True)
-        file_picker = ft.FilePicker()
-        if file_picker not in self.page.overlay:
-            self.page.overlay.append(file_picker)
+        file_picker = _file_picker_for_page(self.page)
         dialog = ft.AlertDialog(
             modal=False,
             title="Bus Monitor",
