@@ -8,6 +8,8 @@ import flet as ft
 
 from fmodmaster.config import Settings
 from fmodmaster.main_view import MainViewController, build_main_view
+import fmodmaster.main_view as main_view
+from fmodmaster.registers import Base, FloatEndian, RegistersModel
 
 
 class FakePage:
@@ -276,6 +278,22 @@ def test_menu_about_opens_dialog_with_current_flet_api() -> None:
     assert page.dialog.title == "About fModMaster"
 
 
+def test_log_file_uses_file_uri_when_opening(monkeypatch, tmp_path) -> None:
+    opened: list[str] = []
+
+    def fake_open(url: str) -> bool:
+        opened.append(url)
+        return True
+
+    monkeypatch.setattr(main_view.webbrowser, "open", fake_open)
+
+    log_path = tmp_path / "fModMaster.log"
+    log_path.write_text("log\n", encoding="utf-8")
+
+    assert main_view._open_local_path(log_path) is True
+    assert opened == [log_path.as_uri()]
+
+
 # --------------------------------------------------------------------------- #
 # Persistence on connect / read-write
 # --------------------------------------------------------------------------- #
@@ -347,6 +365,110 @@ def test_disconnect_does_not_persist_mode_as_connected() -> None:
     controls.connect_button.on_click()
     assert comm.connected is False
     assert s.save_count == 0
+
+
+def test_default_format_dropdown_syncs_default_base_and_legacy_base() -> None:
+    settings = Settings()
+    controller, _, _ = _build_controller_with(FakeComm(), settings)
+
+    controller.controls.data_format_dropdown.value = "Hex"
+    controller.controls.data_format_dropdown.on_select()
+
+    assert settings.default_base == 0
+    assert settings.base == 0
+
+
+def test_build_grid_passes_default_and_register_format_maps() -> None:
+    settings = Settings()
+    settings.default_base = 1
+    settings.register_formats = {0: 3, 2: 2}
+    settings.register_float_endians = {0: 1}
+    comm = FakeComm()
+    comm.values = [0x0000, 0x803F, 5]
+    controller, _, _ = _build_controller_with(comm, settings)
+    controller.controls.qty_field.value = "3"
+
+    table = controller._build_grid()
+    model = table.data
+
+    assert isinstance(model, RegistersModel)
+    assert model.default_base is Base.Dec
+    assert model.format_map == {0: Base.Float, 2: Base.Bin}
+    assert model.float_endian_map == {0: FloatEndian.DCBA}
+    assert isinstance(table.rows[0].cells[0].content, ft.ContextMenu)
+
+
+def test_register_format_helper_sets_float_endian_and_rebuilds_grid() -> None:
+    settings = Settings()
+    controller, _, page = _build_controller_with(FakeComm(), settings)
+
+    controller._apply_register_format(4, Base.Float, FloatEndian.CDAB)
+
+    assert settings.register_formats == {4: 3}
+    assert settings.register_float_endians == {4: 3}
+    assert page.update_count >= 1
+
+
+def test_context_menu_selection_uses_selected_item_data() -> None:
+    class SelectedItem:
+        data = "base:hex"
+
+    class MenuEvent:
+        data = None
+        item = SelectedItem()
+
+    settings = Settings()
+    controller, _, _ = _build_controller_with(FakeComm(), settings)
+    menu = controller._wrap_register_cell(2, ft.Text("cell"))
+
+    assert isinstance(menu, ft.ContextMenu)
+    assert menu.on_select is not None
+    menu.on_select(MenuEvent())
+
+    assert settings.register_formats == {2: 16}
+
+
+def test_register_format_helper_rejects_consumed_continuation() -> None:
+    settings = Settings()
+    settings.register_formats = {0: 3}
+    controller, _, page = _build_controller_with(FakeComm(), settings)
+
+    controller._apply_register_format(1, Base.Hex)
+
+    assert settings.register_formats == {0: 3}
+    assert page.snack_bar is not None
+    assert isinstance(page.snack_bar.content, ft.Text)
+    assert page.snack_bar.content.value == "Register 1 is consumed by float at address 0"
+
+
+def test_reset_register_format_removes_map_entries() -> None:
+    settings = Settings()
+    settings.register_formats = {4: 3}
+    settings.register_float_endians = {4: 2}
+    controller, _, page = _build_controller_with(FakeComm(), settings)
+
+    controller._reset_register_format(4)
+
+    assert settings.register_formats == {}
+    assert settings.register_float_endians == {}
+    assert page.update_count >= 1
+
+
+def test_register_format_maps_survive_session_save_load(tmp_path) -> None:
+    path = tmp_path / "format-session.ses"
+    settings = Settings()
+    settings.default_base = 16
+    settings.register_formats = {0: 3, 2: 2, 3: 16}
+    settings.register_float_endians = {0: 0}
+
+    settings.save_session(str(path))
+    loaded = Settings()
+    loaded.load_session(str(path))
+
+    assert loaded.default_base == 16
+    assert loaded.base == 16
+    assert loaded.register_formats == {0: 3, 2: 2, 3: 16}
+    assert loaded.register_float_endians == {0: 0}
 
 
 from fmodmaster.main_view import _function_index

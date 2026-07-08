@@ -10,9 +10,11 @@ from fmodmaster.registers import (
     RegistersModel,
     build_grid,
     float_from_regs,
+    float_owner_for,
     float_to_regs,
     format_value,
     is_signed_visible,
+    validate_format_assignment,
 )
 
 
@@ -393,3 +395,170 @@ class TestFloatWriteCollection:
 
         # -5.0f = 0xC0A00000 → reg0=0xC0A0, reg1=0x0000
         assert result == [0x3F80, 0x0000, 0xC0A0, 0x0000]
+
+
+class TestFormatMapModel:
+    """Per-register format selection (mixed formats in the same grid)."""
+
+    def test_legacy_base_keyword_remains_single_base_mode(self) -> None:
+        # No format_map → behaves exactly as before; per-address mode is OFF.
+        model = RegistersModel(0, 4, base=Base.Hex, is_write=False)
+
+        assert model._per_address_mode is False
+        assert model.is_float_mode is False
+        # _format_for returns the global base regardless of address.
+        assert model._format_for(0) is Base.Hex
+        assert model._format_for(3) is Base.Hex
+
+    def test_format_map_default_for_unmapped_address(self) -> None:
+        # default_base applies to addresses not listed in the map.
+        model = RegistersModel(
+            0, 4, base=Base.Dec, is_write=False, default_base=Base.Dec,
+            format_map={2: Base.Hex},
+        )
+        assert model._per_address_mode is True
+        assert model._format_for(0) is Base.Dec
+        assert model._format_for(2) is Base.Hex
+        assert model._format_for(3) is Base.Dec
+
+    def test_format_map_float_spans_two_registers(self) -> None:
+        # 1.0f ABCD: reg0=0x3F80 (16256), reg1=0x0000 (0)
+        table = build_grid(
+            start_addr=0, qty=4, base=Base.Dec, signed=False, is_write=False,
+            values=[16256, 0, 42, 1], default_base=Base.Dec,
+            format_map={0: Base.Float},
+        )
+        # Reg 0 → float "1"; reg 1 → continuation "—".
+        assert _text_cell(table.rows[0].cells[0]).value == "1"
+        assert _text_cell(table.rows[0].cells[1]).value == "—"
+
+    def test_format_map_mixed_formats_in_same_row(self) -> None:
+        # Reg 0 → Float (0+1), reg 2 → Bin, reg 3 → Hex.
+        table = build_grid(
+            start_addr=0, qty=4, base=Base.Dec, signed=False, is_write=False,
+            values=[16256, 0, 5, 255], default_base=Base.Dec,
+            format_map={0: Base.Float, 2: Base.Bin, 3: Base.Hex},
+        )
+        assert _text_cell(table.rows[0].cells[0]).value == "1"
+        assert _text_cell(table.rows[0].cells[1]).value == "—"
+        assert _text_cell(table.rows[0].cells[2]).value == "0000000000000101"
+        assert _text_cell(table.rows[0].cells[3]).value == "00ff"
+
+    def test_format_map_float_continuation_not_editable(self) -> None:
+        table = build_grid(
+            start_addr=0, qty=2, base=Base.Dec, signed=False, is_write=True,
+            values=[0, 0], default_base=Base.Dec,
+            format_map={0: Base.Float},
+        )
+        # Reg 0 editable (float), reg 1 is continuation — not a TextField.
+        assert isinstance(table.rows[0].cells[0].content, ft.TextField)
+        # The continuation cell renders as Text, not TextField.
+        assert not isinstance(table.rows[0].cells[1].content, ft.TextField)
+
+    def test_format_map_float_prevents_next_register_config(self) -> None:
+        # When reg 0 is Float, configuring reg 1 should be rejected.
+        format_map = {0: Base.Float}
+        error = validate_format_assignment(1, Base.Hex, format_map)
+        assert error == "Register 1 is consumed by float at address 0"
+        # Configuring reg 2 (not consumed) is allowed.
+        assert validate_format_assignment(2, Base.Hex, format_map) is None
+
+    def test_format_map_float_blocks_when_next_already_configured(self) -> None:
+        # Cannot extend a float at N if N+1 already has an explicit format.
+        format_map: dict[int, Base] = {1: Base.Hex}
+        error = validate_format_assignment(0, Base.Float, format_map)
+        assert error is not None
+        assert "already has an explicit format" in error
+
+    def test_format_map_collect_write_values_mixed(self) -> None:
+        # 4 regs: [Float (0+1), Dec, Hex]. Float = 1.0, Dec = 100, Hex = ffff
+        table = build_grid(
+            start_addr=0, qty=4, base=Base.Dec, signed=False, is_write=True,
+            values=[0, 0, 0, 0], default_base=Base.Dec,
+            format_map={0: Base.Float, 2: Base.Dec, 3: Base.Hex},
+        )
+        model = _table_model(table)
+        _field_cell(table.rows[0].cells[0]).value = "1.0"
+        _field_cell(table.rows[0].cells[2]).value = "100"
+        _field_cell(table.rows[0].cells[3]).value = "ffff"
+
+        result = model.collect_write_values()
+
+        assert result == [0x3F80, 0x0000, 100, 65535]
+
+    def test_format_map_per_register_max_length(self) -> None:
+        table = build_grid(
+            start_addr=0, qty=3, base=Base.Dec, signed=False, is_write=True,
+            values=[0, 0, 0], default_base=Base.Dec,
+            format_map={0: Base.Float, 1: Base.Hex, 2: Base.Bin},
+        )
+        # Reg 0 (Float): max_length 20; reg 1 (Hex): max 4; reg 2 (Bin): max 16.
+        assert _field_cell(table.rows[0].cells[0]).max_length == 20
+        # Reg 1 is float continuation here (consumed by reg 0) — it's Text.
+        # Use a separate scenario where reg 1 is Hex without reg 0 being Float.
+        table2 = build_grid(
+            start_addr=0, qty=3, base=Base.Dec, signed=False, is_write=True,
+            values=[0, 0, 0], default_base=Base.Dec,
+            format_map={1: Base.Hex, 2: Base.Bin},
+        )
+        assert _field_cell(table2.rows[0].cells[1]).max_length == 4
+        assert _field_cell(table2.rows[0].cells[2]).max_length == 16
+
+    def test_format_map_per_register_validation(self) -> None:
+        # Validating Dec and Hex content per address round-trips through the
+        # field's collect_write_values.
+        table = build_grid(
+            start_addr=0, qty=2, base=Base.Dec, signed=False, is_write=True,
+            values=[0, 0], default_base=Base.Dec,
+            format_map={0: Base.Dec, 1: Base.Hex},
+        )
+        model = _table_model(table)
+        _field_cell(table.rows[0].cells[0]).value = "100"
+        _field_cell(table.rows[0].cells[1]).value = "ffff"
+
+        assert model.collect_write_values() == [100, 65535]
+        # Errors surface per-address: bad Hex goes into Hex field.
+        _field_cell(table.rows[0].cells[1]).value = "zzzz"
+        assert model.collect_write_values() is None
+
+    def test_format_map_float_endian_per_register(self) -> None:
+        # Reg 0 → Float ABCD, reg 2 → Float CDAB. Writing 1.0 in each
+        # must encode per-register endian.
+        table = build_grid(
+            start_addr=0, qty=4, base=Base.Dec, signed=False, is_write=True,
+            values=[0, 0, 0, 0], default_base=Base.Dec,
+            format_map={0: Base.Float, 2: Base.Float},
+            float_endian_map={0: FloatEndian.ABCD, 2: FloatEndian.CDAB},
+        )
+        model = _table_model(table)
+        _field_cell(table.rows[0].cells[0]).value = "1.0"
+        _field_cell(table.rows[0].cells[2]).value = "1.0"
+
+        result = model.collect_write_values()
+
+        # ABCD: [0x3F80, 0x0000]; CDAB: words swapped → [0x0000, 0x3F80]
+        assert result == [0x3F80, 0x0000, 0x0000, 0x3F80]
+
+    def test_format_map_odd_qty_last_register_non_float(self) -> None:
+        # 3 registers: [Float (0+1), Dec fallback for reg 2]. Setting reg 2
+        # to Float on odd qty would still leave reg 2 alone → int fallback.
+        table = build_grid(
+            start_addr=0, qty=3, base=Base.Dec, signed=False, is_write=False,
+            values=[16256, 0, 42], default_base=Base.Dec,
+            format_map={0: Base.Float, 2: Base.Float},
+        )
+        # Reg 0+1: float "1"; reg 2 has no pair (last reg of odd qty) → 42 as int.
+        assert _text_cell(table.rows[0].cells[0]).value == "1"
+        assert _text_cell(table.rows[0].cells[1]).value == "—"
+        assert _text_cell(table.rows[0].cells[2]).value == "42"
+
+
+class TestFloatOwnerFor:
+    def test_returns_owner_when_previous_address_is_float(self) -> None:
+        assert float_owner_for(1, {0: Base.Float}) == 0
+        assert float_owner_for(3, {2: Base.Float}) == 2
+
+    def test_returns_none_when_previous_address_is_not_float(self) -> None:
+        assert float_owner_for(1, {0: Base.Hex}) is None
+        assert float_owner_for(2, {0: Base.Float}) is None  # only looks at N-1
+        assert float_owner_for(0, {0: Base.Float}) is None  # no negative addrs

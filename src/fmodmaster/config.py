@@ -53,6 +53,8 @@ class Settings:
     _RTU = "RTU"
     _VAR = "Var"
     _SESSION = "Session"
+    _REGISTER_FORMATS = "RegisterFormats"
+    _REGISTER_FLOAT_ENDIANS = "RegisterFloatEndians"
 
     def __init__(self) -> None:
         """Initialise the settings with qModMaster defaults (no file load)."""
@@ -92,6 +94,12 @@ class Settings:
         self.no_of_regs: int = 0
         self.base: int = 1  # Dec
         self.float_endian: int = 0  # ABCD
+
+        # Per-register display formats (new feature). When absent/empty, the
+        # legacy single-base behaviour is preserved (base / float_endian above).
+        self.default_base: int = 1  # Dec; mirrors base after load.
+        self.register_formats: dict[int, int] = {}
+        self.register_float_endians: dict[int, int] = {}
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -269,6 +277,13 @@ class Settings:
             if parser.has_option(self._SESSION, "Base"):
                 try:
                     self.base = int(parser.get(self._SESSION, "Base"))
+                    self.default_base = self.base
+                except ValueError:
+                    pass
+            if parser.has_option(self._SESSION, "DefaultBase"):
+                try:
+                    self.default_base = int(parser.get(self._SESSION, "DefaultBase"))
+                    self.base = self.default_base
                 except ValueError:
                     pass
             if parser.has_option(self._SESSION, "FloatEndian"):
@@ -276,6 +291,14 @@ class Settings:
                     self.float_endian = int(parser.get(self._SESSION, "FloatEndian"))
                 except ValueError:
                     pass
+
+        if parser.has_section(self._REGISTER_FORMATS):
+            self.register_formats = _parse_int_section(parser, self._REGISTER_FORMATS)
+
+        if parser.has_section(self._REGISTER_FLOAT_ENDIANS):
+            self.register_float_endians = _parse_int_section(
+                parser, self._REGISTER_FLOAT_ENDIANS
+            )
 
     def _save_to_file(self, path: str) -> None:
         """Write the current state to ``path`` in INI format."""
@@ -308,9 +331,31 @@ class Settings:
             "FunctionCode": str(self.function_code),
             "StartAddr": str(self.start_addr),
             "NoOfRegs": str(self.no_of_regs),
-            "Base": str(self.base),
+            "Base": str(self.default_base),
+            "DefaultBase": str(self.default_base),
             "FloatEndian": str(self.float_endian),
         }
 
+        if self.register_formats:
+            parser[self._REGISTER_FORMATS] = {
+                str(addr): str(value)
+                for addr, value in sorted(self.register_formats.items())
+            }
+        if self.register_float_endians:
+            parser[self._REGISTER_FLOAT_ENDIANS] = {
+                str(addr): str(value)
+                for addr, value in sorted(self.register_float_endians.items())
+            }
+
         with open(path, "w", encoding="utf-8") as fh:
             parser.write(fh)
+
+
+def _parse_int_section(parser: configparser.ConfigParser, section: str) -> dict[int, int]:
+    values: dict[int, int] = {}
+    for raw_key, raw_value in parser.items(section):
+        try:
+            values[int(raw_key)] = int(raw_value)
+        except ValueError:
+            continue
+    return values

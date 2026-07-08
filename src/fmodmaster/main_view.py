@@ -34,7 +34,14 @@ from .modbus_comm import (
     FC_WRITE_SINGLE_REGISTER,
     ModbusComm,
 )
-from .registers import Base, FloatEndian, RegistersModel, build_grid, is_signed_visible
+from .registers import (
+    Base,
+    FloatEndian,
+    RegistersModel,
+    build_grid,
+    is_signed_visible,
+    validate_format_assignment,
+)
 from .tools_view import ToolsController, build_tools_dialog
 
 
@@ -82,7 +89,10 @@ class SettingsLike(Protocol):
     start_addr: int
     no_of_regs: int
     base: int
+    default_base: int
     float_endian: int
+    register_formats: dict[int, int]
+    register_float_endians: dict[int, int]
     modbus_mode: int
     time_out: str
     base_addr: str
@@ -357,7 +367,7 @@ class MainViewController:
     def _build_controls(self) -> MainViewControls:
         mode = _MODE_TCP if int(self.settings.modbus_mode) == 1 else _MODE_RTU
         fc = _normalize_function_code(self.settings.function_code)
-        data_format = _format_from_base(self.settings.base)
+        data_format = _format_from_base(self.settings.default_base)
         qty = _clamp_quantity(self.settings.no_of_regs or 1, _SPECS_BY_CODE[fc])
         grid_host = ft.Container()
         return MainViewControls(
@@ -530,7 +540,7 @@ class MainViewController:
                             _labeled_field("Start Address", c.start_addr_field),
                             _labeled_field("Addr Base", c.address_base_toggle),
                             _labeled_field(c.qty_label, c.qty_field),
-                            _labeled_field("Data Format", c.data_format_dropdown),
+                            _labeled_field("Default Format", c.data_format_dropdown),
                             ft.Container(
                                 c.signed_checkbox,
                                 height=48,
@@ -626,6 +636,7 @@ class MainViewController:
         self.schedule_refresh()
 
     def _on_format_change(self) -> None:
+        self._sync_default_format_from_controls()
         self.schedule_refresh()
 
     def _on_request_change(self) -> None:
@@ -923,7 +934,9 @@ class MainViewController:
         )
         self.controls.start_addr_field.value = str(self.settings.start_addr)
         self.controls.qty_field.value = str(max(self.settings.no_of_regs, 1))
-        self.controls.data_format_dropdown.value = _format_from_base(self.settings.base)
+        self.controls.data_format_dropdown.value = _format_from_base(
+            self.settings.default_base
+        )
 
     def _sync_settings_from_controls(self) -> None:
         self.settings.modbus_mode = 1 if self._mode() == _MODE_TCP else 0
@@ -938,7 +951,12 @@ class MainViewController:
         self.settings.no_of_regs = _parse_int(
             self.controls.qty_field.value, self.settings.no_of_regs
         )
-        self.settings.base = _base_to_settings_value(self._data_base())
+        self._sync_default_format_from_controls()
+
+    def _sync_default_format_from_controls(self) -> None:
+        value = _base_to_settings_value(self._data_base())
+        self.settings.default_base = value
+        self.settings.base = value
 
     def _run_worker(
         self,
@@ -1082,6 +1100,90 @@ class MainViewController:
             values=self.comm.values,
             valid=self.comm.valid,
             float_endian=self._float_endian(),
+            default_base=self._data_base(),
+            format_map=self._format_map(),
+            float_endian_map=self._float_endian_map(),
+            cell_wrapper=self._wrap_register_cell,
+        )
+
+    def _format_map(self) -> dict[int, Base]:
+        result: dict[int, Base] = {}
+        for address, raw_base in self.settings.register_formats.items():
+            try:
+                result[address] = Base(raw_base)
+            except ValueError:
+                continue
+        return result
+
+    def _float_endian_map(self) -> dict[int, FloatEndian]:
+        result: dict[int, FloatEndian] = {}
+        for address, raw_endian in self.settings.register_float_endians.items():
+            try:
+                result[address] = FloatEndian(raw_endian)
+            except ValueError:
+                continue
+        return result
+
+    def _apply_register_format(
+        self,
+        address: int,
+        base: Base,
+        endian: FloatEndian | None = None,
+    ) -> None:
+        message = validate_format_assignment(address, base, self._format_map())
+        if message is not None:
+            self._show_snackbar(message)
+            return
+        self.settings.register_formats[address] = int(base)
+        if base is Base.Float:
+            self.settings.register_float_endians[address] = int(
+                endian if endian is not None else self._float_endian()
+            )
+        else:
+            self.settings.register_float_endians.pop(address, None)
+        self.schedule_refresh()
+
+    def _reset_register_format(self, address: int) -> None:
+        self.settings.register_formats.pop(address, None)
+        self.settings.register_float_endians.pop(address, None)
+        self.schedule_refresh()
+
+    def _wrap_register_cell(self, address: int, control: ft.Control) -> ft.Control:
+        def on_select(event: ft.ContextMenuSelectEvent) -> None:
+            item = event.item
+            item_data = getattr(item, "data", None) if item is not None else None
+            action = str(item_data or event.data or "")
+            match action:
+                case "base:bin":
+                    self._apply_register_format(address, Base.Bin)
+                case "base:dec":
+                    self._apply_register_format(address, Base.Dec)
+                case "base:hex":
+                    self._apply_register_format(address, Base.Hex)
+                case "float:abcd":
+                    self._apply_register_format(address, Base.Float, FloatEndian.ABCD)
+                case "float:dcba":
+                    self._apply_register_format(address, Base.Float, FloatEndian.DCBA)
+                case "float:badc":
+                    self._apply_register_format(address, Base.Float, FloatEndian.BADC)
+                case "float:cdab":
+                    self._apply_register_format(address, Base.Float, FloatEndian.CDAB)
+                case "reset":
+                    self._reset_register_format(address)
+
+        return ft.ContextMenu(
+            content=control,
+            secondary_items=[
+                ft.PopupMenuItem(content="Dec", data="base:dec"),
+                ft.PopupMenuItem(content="Bin", data="base:bin"),
+                ft.PopupMenuItem(content="Hex", data="base:hex"),
+                ft.PopupMenuItem(content="Float ABCD", data="float:abcd"),
+                ft.PopupMenuItem(content="Float DCBA", data="float:dcba"),
+                ft.PopupMenuItem(content="Float BADC", data="float:badc"),
+                ft.PopupMenuItem(content="Float CDAB", data="float:cdab"),
+                ft.PopupMenuItem(content="Reset to default", data="reset"),
+            ],
+            on_select=on_select,
         )
 
     def _show_snackbar(self, message: str) -> None:
@@ -1250,7 +1352,7 @@ def _file_picker_for_page(page: PageLike) -> ft.FilePicker:
 
 
 def _open_local_path(path: Path) -> bool:
-    if webbrowser.open(str(path)):
+    if webbrowser.open(path.resolve().as_uri()):
         return True
     try:
         if sys.platform.startswith("win"):

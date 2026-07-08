@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import struct
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Final, Iterable, assert_never
@@ -36,6 +37,7 @@ class FloatEndian(IntEnum):
 
 
 BaseValue = Base | int
+CellWrapper = Callable[[int, ft.Control], ft.Control]
 
 _GRID_WIDTH: Final = 10
 _COLUMN_LABELS: Final = tuple(f"{col:02d}" for col in range(_GRID_WIDTH))
@@ -78,6 +80,48 @@ def float_to_regs(value: float, endian: FloatEndian) -> tuple[int, int]:
             return lo, hi
         case unreachable:
             assert_never(unreachable)
+
+
+def float_owner_for(address: int, format_map: dict[int, Base]) -> int | None:
+    """Return the address N whose float consumes ``address`` as its continuation.
+
+    A float at N consumes N+1. If ``address`` is the continuation register of a
+    float stored at ``address - 1`` (and that earlier address is within the map
+    and set to ``Base.Float``), return ``address - 1``. Otherwise return None.
+    """
+    if address < 1:
+        return None
+    owner = address - 1
+    if format_map.get(owner) is Base.Float:
+        return owner
+    return None
+
+
+def validate_format_assignment(
+    address: int,
+    base: Base,
+    format_map: dict[int, Base],
+) -> str | None:
+    """Return an error message if assigning ``base`` at ``address`` is invalid.
+
+    Cases:
+    - Assigning *any* format to a register already consumed as a float
+      continuation (address N+1 of an existing float at N) is rejected.
+    - Assigning ``Base.Float`` at N when N+1 already has an explicit format is
+      rejected (would silently overwrite the user's choice).
+    Returns None when the assignment is allowed.
+    """
+    owner = float_owner_for(address, format_map)
+    if owner is not None:
+        return f"Register {address} is consumed by float at address {owner}"
+    if base is Base.Float:
+        next_addr = address + 1
+        if next_addr in format_map and format_map[next_addr] is not Base.Float:
+            return (
+                f"Register {next_addr} already has an explicit format; "
+                f"cannot extend float at address {address}"
+            )
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +176,10 @@ class RegistersModel:
         values: Iterable[int | None] | None = None,
         valid: bool = True,
         float_endian: FloatEndian = FloatEndian.ABCD,
+        default_base: BaseValue | None = None,
+        format_map: Mapping[int, BaseValue] | None = None,
+        float_endian_map: Mapping[int, FloatEndian | int] | None = None,
+        cell_wrapper: CellWrapper | None = None,
     ) -> None:
         if qty < 1:
             raise ValueError("qty must be at least 1")
@@ -142,13 +190,75 @@ class RegistersModel:
         self.is_write = is_write
         self.is_16bit = is_16bit
         self.float_endian = float_endian
+
+        # Per-address format configuration. When format_map is empty/None,
+        # behaviour is identical to the legacy single-base model. When present,
+        # per-address logic takes over for the addresses listed and falls back
+        # to default_base for unlisted addresses.
+        if default_base is None:
+            self.default_base = self.base
+        else:
+            self.default_base = _normalize_base(default_base)
+        self.format_map: dict[int, Base] = {
+            addr: _normalize_base(v) for addr, v in (format_map or {}).items()
+        }
+        self.float_endian_map: dict[int, FloatEndian] = {
+            addr: _coerce_endian(v)
+            for addr, v in (float_endian_map or {}).items()
+        }
+        self._cell_wrapper = cell_wrapper
+        self._per_address_mode = bool(self.format_map)
+
         self._values = list(values) if values is not None else []
         self.cells = self._build_cells(valid=valid)
         self.editable_fields: dict[int, ft.TextField] = {}
 
+    # ------------------------------------------------------------------ #
+    # Per-address selection
+    # ------------------------------------------------------------------ #
+
     @property
     def is_float_mode(self) -> bool:
+        """Legacy single-base float mode (whole grid is float)."""
+        return self.base is Base.Float and not self._per_address_mode
+
+    def _format_for(self, address: int) -> Base:
+        if not self._per_address_mode:
+            return self.base
+        return self.format_map.get(address, self.default_base)
+
+    def _float_endian_for(self, address: int) -> FloatEndian:
+        return self.float_endian_map.get(address, self.float_endian)
+
+    def _is_float_at(self, address: int, value_index: int) -> bool:
+        """True if a register at ``address`` should be displayed as a float.
+
+        - Per-address mode: ``format_map[address] is Base.Float`` and the paired
+          register exists in the configured range.
+        - Legacy mode: ``self.base is Base.Float``.
+        A float at the last register of an odd-qty range falls back to int
+        (handled by the cell builder).
+        """
+        if self._per_address_mode:
+            if self.format_map.get(address) is not Base.Float:
+                return False
+            # Float at the last register of an odd-qty range -> no pair -> int.
+            if value_index == self.qty - 1:
+                return False
+            return True
         return self.base is Base.Float
+
+    def _is_continuation_at(self, address: int, value_index: int) -> bool:
+        """True if ``address`` is the N+1 continuation of a float at N."""
+        if value_index % 2 == 1 and self._is_float_at(address - 1, value_index - 1):
+            return True
+        if self._per_address_mode and float_owner_for(address, self.format_map) is not None:
+            return True
+        return False
+
+    # ------------------------------------------------------------------ #
+    # Public API
+    # ------------------------------------------------------------------ #
 
     def to_datatable(self) -> ft.DataTable:
         self.editable_fields.clear()
@@ -183,6 +293,8 @@ class RegistersModel:
         )
 
     def collect_write_values(self) -> list[int] | None:
+        if self._per_address_mode:
+            return self._collect_per_address_write_values()
         if self.is_float_mode:
             return self._collect_float_write_values()
         collected: list[int] = []
@@ -198,12 +310,42 @@ class RegistersModel:
             collected.append(parsed)
         return collected
 
+    def _collect_per_address_write_values(self) -> list[int] | None:
+        collected: list[int] = []
+        addr = self.start_addr
+        end = self.start_addr + self.qty
+        while addr < end:
+            field = self.editable_fields.get(addr)
+            if field is None:
+                # Continuation cell of a float pair above - value already emitted.
+                addr += 1
+                continue
+            if self._format_for(addr) is Base.Float:
+                parsed = self._parse_edit_float(field.value or "")
+                if parsed is None:
+                    _mark_text_field(field, is_valid=False)
+                    return None
+                _mark_text_field(field, is_valid=True)
+                reg0, reg1 = float_to_regs(parsed, self._float_endian_for(addr))
+                collected.append(reg0)
+                collected.append(reg1)
+                addr += 2
+            else:
+                parsed = self._parse_edit_value_for(field.value or "", addr)
+                if parsed is None or not isinstance(parsed, int):
+                    _mark_text_field(field, is_valid=False)
+                    return None
+                _mark_text_field(field, is_valid=True)
+                collected.append(parsed)
+                addr += 1
+        return collected
+
     def _collect_float_write_values(self) -> list[int] | None:
         collected: list[int] = []
         for addr in range(self.start_addr, self.start_addr + self.qty, 2):
             field = self.editable_fields.get(addr)
             if field is None:
-                # Odd register of a pair — value already handled by even side.
+                # Odd register of a pair - value already handled by even side.
                 continue
             parsed = self._parse_edit_float(field.value or "")
             if parsed is None:
@@ -214,6 +356,10 @@ class RegistersModel:
             collected.append(reg0)
             collected.append(reg1)
         return collected
+
+    # ------------------------------------------------------------------ #
+    # Cell construction
+    # ------------------------------------------------------------------ #
 
     def _build_cells(self, *, valid: bool) -> list[list[RegisterCell]]:
         if self.qty == 1:
@@ -238,20 +384,42 @@ class RegistersModel:
 
     def _used_cell(self, address: int, value_index: int, *, valid: bool) -> RegisterCell:
         cell = self._used_cell_core(address, value_index, valid=valid)
-        if not self.is_float_mode:
+        if not self._per_address_mode:
+            if not self.is_float_mode:
+                return cell
+            return self._wrap_float_cell(cell, address, value_index, valid=valid)
+        # Per-address path. Two sub-cases:
+        # 1. Continuation cell of a float at address-1 → render as "—",
+        #    non-editable, even though it is itself unlisted in the format_map.
+        # 2. Float-owning address → render as float; everything else stays int.
+        if self._is_continuation_at(address, value_index):
+            return RegisterCell(
+                address,
+                cell.value,
+                "—",
+                True,
+                False,  # not editable
+                valid,
+                cell.tooltip,
+            )
+        fmt = self._format_for(address)
+        if fmt is not Base.Float:
             return cell
-        return self._wrap_float_cell(cell, address, value_index, valid=valid)
+        return self._wrap_float_cell_per_address(
+            cell, address, value_index, valid=valid
+        )
 
     def _used_cell_core(
         self, address: int, value_index: int, *, valid: bool
     ) -> RegisterCell:
         value = self._values[value_index] if value_index < len(self._values) else None
+        fmt = self._format_for(address) if self._per_address_mode else self.base
         if not valid:
             text = "-/-"
         elif value is None:
             text = "-"
         else:
-            text = format_value(value, self.base, self.is_16bit, self.signed)
+            text = format_value(value, fmt, self.is_16bit, self.signed)
         return RegisterCell(
             address,
             value,
@@ -261,6 +429,8 @@ class RegistersModel:
             valid,
             f"Address : {_format_address(address, self.base)}",
         )
+
+    # Legacy all-grid float path ------------------------------------------- #
 
     def _wrap_float_cell(
         self, cell: RegisterCell, address: int, value_index: int, *, valid: bool
@@ -325,32 +495,100 @@ class RegistersModel:
             f"{_format_address(address + 1, self.base)}",
         )
 
+    # Per-address float path ----------------------------------------------- #
+
+    def _wrap_float_cell_per_address(
+        self, cell: RegisterCell, address: int, value_index: int, *, valid: bool
+    ) -> RegisterCell:
+        """Float for a single configured address: N displays, N+1 is continuation."""
+        # Continuation cell — part of a float pair above.
+        if self._is_continuation_at(address, value_index):
+            return RegisterCell(
+                address,
+                cell.value,
+                "—",
+                True,
+                False,  # not editable
+                valid,
+                cell.tooltip,
+            )
+        # Float owns this row: try to form a float from this register and next.
+        next_index = value_index + 1
+        next_value = (
+            self._values[next_index] if next_index < len(self._values) else None
+        )
+        # Last register of an odd qty with no pair -> integer fallback.
+        if next_value is None and value_index == self.qty - 1:
+            return cell
+        if not valid:
+            return RegisterCell(
+                address,
+                cell.value,
+                "-/-",
+                True,
+                self.is_write,
+                valid,
+                f"Address : {_format_address(address, self.base)} → "
+                f"{_format_address(address + 1, self.base)}",
+            )
+        if cell.value is None or next_value is None:
+            return RegisterCell(
+                address,
+                cell.value,
+                "-",
+                True,
+                self.is_write,
+                valid,
+                f"Address : {_format_address(address, self.base)} → "
+                f"{_format_address(address + 1, self.base)}",
+            )
+        float_val = float_from_regs(
+            cell.value, next_value, self._float_endian_for(address)
+        )
+        return RegisterCell(
+            address,
+            cell.value,
+            _format_float_display(float_val),
+            True,
+            self.is_write,
+            valid,
+            f"Address : {_format_address(address, self.base)} → "
+            f"{_format_address(address + 1, self.base)}",
+        )
+
     def _build_data_cell(self, cell: RegisterCell) -> ft.DataCell:
         if cell.is_editable and cell.is_used:
             field = self._build_text_field(cell)
             self.editable_fields[cell.address] = field
-            return ft.DataCell(field, tooltip=cell.tooltip)
+            content = self._wrap_cell_content(cell, field)
+            return ft.DataCell(content, tooltip=cell.tooltip)
         text = ft.Text(
             cell.visible_text,
             size=14,
             color=_COLOR_TEXT if cell.is_used and cell.is_valid else _COLOR_ERROR,
         )
+        content = ft.Container(
+            text,
+            width=75,
+            height=36,
+            alignment=ft.Alignment.CENTER_LEFT,
+            bgcolor=_COLOR_OUT_OF_RANGE_BG if not cell.is_used else None,
+        )
         return ft.DataCell(
-            ft.Container(
-                text,
-                width=75,
-                height=36,
-                alignment=ft.Alignment.CENTER_LEFT,
-                bgcolor=_COLOR_OUT_OF_RANGE_BG if not cell.is_used else None,
-            ),
+            self._wrap_cell_content(cell, content),
             tooltip=cell.tooltip or None,
         )
+
+    def _wrap_cell_content(self, cell: RegisterCell, control: ft.Control) -> ft.Control:
+        if not cell.is_used or self._cell_wrapper is None:
+            return control
+        return self._cell_wrapper(cell.address, control)
 
     def _build_text_field(self, cell: RegisterCell) -> ft.TextField:
         field = ft.TextField(
             value="" if cell.visible_text == "-" else cell.visible_text,
             tooltip=cell.tooltip,
-            max_length=self._max_length(),
+            max_length=self._max_length_for(cell.address),
             counter="",
             width=75,
             height=36,
@@ -361,7 +599,20 @@ class RegistersModel:
             on_blur=None,
         )
 
-        if self.is_float_mode:
+        if self._per_address_mode:
+            addr = cell.address
+
+            def validate_field() -> None:
+                if self._format_for(addr) is Base.Float:
+                    _mark_text_field(
+                        field, is_valid=self._parse_edit_float(field.value) is not None
+                    )
+                else:
+                    _mark_text_field(
+                        field,
+                        is_valid=self._parse_edit_value_for(field.value, addr) is not None,
+                    )
+        elif self.is_float_mode:
 
             def validate_field() -> None:
                 _mark_text_field(
@@ -396,6 +647,24 @@ class RegistersModel:
             case unreachable:
                 assert_never(unreachable)
 
+    def _max_length_for(self, address: int) -> int | None:
+        if not self._per_address_mode:
+            return self._max_length()
+        fmt = self._format_for(address)
+        if fmt is Base.Float:
+            return 20
+        if not self.is_16bit:
+            return 1
+        match fmt:
+            case Base.Bin:
+                return 16
+            case Base.Dec:
+                return 6 if self.signed else 5
+            case Base.Hex:
+                return 4
+            case unreachable:
+                assert_never(unreachable)
+
     def _parse_edit_value(self, raw: str) -> int | None:
         text = raw.strip()
         if not text:
@@ -422,6 +691,39 @@ class RegistersModel:
                 return int(text, 16)
             case Base.Float:
                 return None  # Float validation uses _parse_edit_float instead
+            case unreachable:
+                assert_never(unreachable)
+
+    def _parse_edit_value_for(self, raw: str, address: int) -> int | None:
+        """Per-address version of :meth:`_parse_edit_value`.
+
+        Float parsing is handled separately by :meth:`_parse_edit_float`; this
+        method is only called for non-float formats.
+        """
+        text = raw.strip()
+        if not text:
+            return None
+        fmt = self._format_for(address)
+        if fmt is Base.Float:
+            return None
+        if not self.is_16bit:
+            return int(text) if text in {"0", "1"} else None
+        match fmt:
+            case Base.Bin:
+                if len(text) > 16 or any(char not in {"0", "1"} for char in text):
+                    return None
+                return int(text, 2)
+            case Base.Dec:
+                if not _is_decimal_text(text):
+                    return None
+                parsed = int(text, 10)
+                if self.signed:
+                    return parsed if -32768 <= parsed <= 32767 else None
+                return parsed if 0 <= parsed <= 65535 else None
+            case Base.Hex:
+                if len(text) > 4 or any(char not in _HEX_DIGITS for char in text):
+                    return None
+                return int(text, 16)
             case unreachable:
                 assert_never(unreachable)
 
@@ -453,6 +755,10 @@ def build_grid(
     values: Iterable[int | None] | None = None,
     valid: bool = True,
     float_endian: FloatEndian = FloatEndian.ABCD,
+    default_base: BaseValue | None = None,
+    format_map: Mapping[int, BaseValue] | None = None,
+    float_endian_map: Mapping[int, FloatEndian | int] | None = None,
+    cell_wrapper: CellWrapper | None = None,
 ) -> ft.DataTable:
     return RegistersModel(
         start_addr,
@@ -464,6 +770,10 @@ def build_grid(
         values=values,
         valid=valid,
         float_endian=float_endian,
+        default_base=default_base,
+        format_map=format_map,
+        float_endian_map=float_endian_map,
+        cell_wrapper=cell_wrapper,
     ).to_datatable()
 
 
@@ -476,6 +786,13 @@ def _normalize_base(base: BaseValue) -> Base:
         return Base(int(base))
     except ValueError:
         return Base.Dec
+
+
+def _coerce_endian(value: FloatEndian | int) -> FloatEndian:
+    try:
+        return FloatEndian(int(value))
+    except ValueError:
+        return FloatEndian.ABCD
 
 
 def _format_float_display(value: float) -> str:

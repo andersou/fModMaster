@@ -51,6 +51,9 @@ def test_defaults_match_cpp(ini_path):
     assert s.start_addr == 0
     assert s.no_of_regs == 0
     assert s.base == 1
+    assert s.default_base == 1
+    assert s.register_formats == {}
+    assert s.register_float_endians == {}
     # SerialDev / RTS / SerialPortName are platform-dependent.
     if os.name == "nt":
         assert s.serial_dev == "COM"
@@ -88,6 +91,9 @@ def test_defaults_round_trip(ini_path):
     assert loaded.start_addr == s.start_addr
     assert loaded.no_of_regs == s.no_of_regs
     assert loaded.base == s.base
+    assert loaded.default_base == s.default_base
+    assert loaded.register_formats == s.register_formats
+    assert loaded.register_float_endians == s.register_float_endians
 
 
 # --------------------------------------------------------------------------- #
@@ -152,6 +158,7 @@ def test_session_round_trip_identical_values(ses_path):
     s.start_addr = 100
     s.no_of_regs = 20
     s.base = 0  # Hex
+    s.default_base = 0
     s.time_out = "2000"
     s.save_session(ses_path)
 
@@ -168,7 +175,55 @@ def test_session_round_trip_identical_values(ses_path):
     assert loaded.start_addr == 100
     assert loaded.no_of_regs == 20
     assert loaded.base == 0
+    assert loaded.default_base == 0
     assert loaded.time_out == "2000"
+
+
+def test_register_format_maps_round_trip(ses_path):
+    s = Settings()
+    s.default_base = 10
+    s.register_formats = {0: 3, 2: 2, 3: 16}
+    s.register_float_endians = {0: 0, 4: 1}
+
+    s.save_session(ses_path)
+
+    loaded = Settings()
+    loaded.load_session(ses_path)
+
+    assert loaded.base == 10
+    assert loaded.default_base == 10
+    assert loaded.register_formats == {0: 3, 2: 2, 3: 16}
+    assert loaded.register_float_endians == {0: 0, 4: 1}
+
+
+def test_legacy_session_base_loads_default_base_when_default_base_missing(ses_path):
+    with open(ses_path, "w", encoding="utf-8") as fh:
+        fh.write("[Session]\nBase = 16\n")
+
+    loaded = Settings()
+    loaded.load_session(ses_path)
+
+    assert loaded.base == 16
+    assert loaded.default_base == 16
+
+
+def test_invalid_register_format_entries_are_ignored(ses_path):
+    with open(ses_path, "w", encoding="utf-8") as fh:
+        fh.write(
+            "[RegisterFormats]\n"
+            "0 = 3\n"
+            "bad-key = 2\n"
+            "2 = not-int\n"
+            "[RegisterFloatEndians]\n"
+            "4 = 1\n"
+            "x = y\n"
+        )
+
+    loaded = Settings()
+    loaded.load_session(ses_path)
+
+    assert loaded.register_formats == {0: 3}
+    assert loaded.register_float_endians == {4: 1}
 
 
 def test_session_load_missing_file_keeps_defaults(ses_path):
