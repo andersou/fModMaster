@@ -641,9 +641,15 @@ class MainViewController:
                 self._show_snackbar(str(exc))
                 return
         self._run_worker(
-            lambda: self._toggle_connection(request),
+            lambda: self._toggle_and_persist_mode(request),
             on_value_error=self._show_connection_error,
         )
+
+    def _toggle_and_persist_mode(self, request: ConnectionRequest | None) -> None:
+        self._toggle_connection(request)
+        if self.comm.connected:
+            self._sync_settings_from_controls()
+            self.settings.save_settings()
 
     def _on_read_write_click(self) -> None:
         if not self.comm.connected:
@@ -653,7 +659,12 @@ class MainViewController:
             self._show_snackbar("Invalid write value in table.")
             self.schedule_refresh()
             return
-        self._run_worker(self.comm.transaction)
+        self._run_worker(self._transaction_and_persist_fc)
+
+    def _transaction_and_persist_fc(self) -> None:
+        self.comm.transaction()
+        self._sync_settings_from_controls()
+        self.settings.save_settings()
 
     def _on_scan_click(self) -> None:
         if not self.comm.connected and not self.comm.scan_running:

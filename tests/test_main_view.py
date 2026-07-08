@@ -119,10 +119,29 @@ class RejectingTcpComm(FakeComm):
         raise ValueError("Connection failed: TCP port 70000 out of range (1..65535).")
 
 
+class FakeSettings(Settings):
+    """Settings subclass that tracks ``save_settings`` calls for test assertions."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.save_count = 0
+        self.last_save_path: str | None = None
+
+    def save_settings(self, path: str | None = None) -> None:
+        self.save_count += 1
+        self.last_save_path = path
+        super().save_settings(path)
+
+
 def _build_controller() -> tuple[MainViewController, FakeComm, FakePage]:
+    return _build_controller_with(FakeComm(), Settings())
+
+
+def _build_controller_with(
+    comm: FakeComm, settings: Settings | FakeSettings
+) -> tuple[MainViewController, FakeComm, FakePage]:
     page = FakePage()
-    comm = FakeComm()
-    view = build_main_view(page, settings=Settings(), comm=comm)
+    view = build_main_view(page, settings=settings, comm=comm)
     assert isinstance(view.data, MainViewController)
     return view.data, comm, page
 
@@ -255,3 +274,79 @@ def test_menu_about_opens_dialog_with_current_flet_api() -> None:
     assert page.dialog is not None
     assert page.dialog.open is True
     assert page.dialog.title == "About fModMaster"
+
+
+# --------------------------------------------------------------------------- #
+# Persistence on connect / read-write
+# --------------------------------------------------------------------------- #
+
+
+def test_connect_persists_modbus_mode_to_settings() -> None:
+    """After a successful connect, modbus_mode is saved to INI."""
+    s = FakeSettings()
+    controller, comm, _ = _build_controller_with(FakeComm(), s)
+    controls = controller.controls
+
+    controls.mode_dropdown.value = "TCP"
+    controls.mode_dropdown.on_select()
+
+    controls.connect_button.on_click()
+
+    assert comm.connected is True
+    assert comm.mode == "TCP"
+    assert s.modbus_mode == 1
+    assert s.save_count >= 1
+
+
+def test_connect_persists_rtu_mode() -> None:
+    """RTU connect persists modbus_mode=0."""
+    s = FakeSettings()
+    controller, comm, _ = _build_controller_with(FakeComm(), s)
+    controls = controller.controls
+
+    controls.connect_button.on_click()
+
+    assert comm.connected is True
+    assert comm.mode == "RTU"
+    assert s.modbus_mode == 0
+    assert s.save_count >= 1
+
+
+def test_read_write_persists_function_code_to_settings() -> None:
+    """After read/write, function_code is saved to INI."""
+    s = FakeSettings()
+    controller, comm, _ = _build_controller_with(FakeComm(), s)
+    controls = controller.controls
+
+    controls.connect_button.on_click()
+    s.save_count = 0
+
+    controls.function_dropdown.value = "3"
+    controls.function_dropdown.on_select()
+
+    controls.read_write_button.on_click()
+
+    assert comm.packets >= 1
+    assert s.function_code == _function_index(0x03)
+    assert s.save_count >= 1
+
+
+def test_disconnect_does_not_persist_mode_as_connected() -> None:
+    """Disconnect should not flag modbus_mode as TCP/RTU of a connected state."""
+    s = FakeSettings()
+    controller, comm, _ = _build_controller_with(FakeComm(), s)
+    controls = controller.controls
+
+    controls.mode_dropdown.value = "TCP"
+    controls.mode_dropdown.on_select()
+    controls.connect_button.on_click()
+    assert comm.connected is True
+    s.save_count = 0
+
+    # Disconnect
+    controls.connect_button.on_click()
+    assert comm.connected is False
+    assert s.save_count == 0
+
+
+from fmodmaster.main_view import _function_index
