@@ -15,6 +15,8 @@ class FakePage:
         self.appbar: ft.AppBar | None = None
         self.snack_bar: ft.SnackBar | None = None
         self.dialog: ft.AlertDialog | None = None
+        self.show_dialog_count = 0
+        self.pop_dialog_count = 0
         self.update_count = 0
 
     def run_thread(self, handler: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
@@ -35,6 +37,15 @@ class FakePage:
 
     def update(self) -> None:
         self.update_count += 1
+
+    def show_dialog(self, dialog: ft.AlertDialog) -> None:
+        self.dialog = dialog
+        self.show_dialog_count += 1
+
+    def pop_dialog(self) -> None:
+        self.pop_dialog_count += 1
+        if self.dialog is not None:
+            self.dialog.open = False
 
     def launch_url(self, url: str) -> None:
         self.launched_url = url
@@ -102,6 +113,12 @@ class FakeComm:
         self.errors = 0
 
 
+class RejectingTcpComm(FakeComm):
+    def connect_tcp(self, ip: str, port: int, timeout: int | str | float) -> bool:
+        self.tcp_args = (ip, port, timeout)
+        raise ValueError("Connection failed: TCP port 70000 out of range (1..65535).")
+
+
 def _build_controller() -> tuple[MainViewController, FakeComm, FakePage]:
     page = FakePage()
     comm = FakeComm()
@@ -144,6 +161,28 @@ def test_connect_enables_transactions_and_locks_comm_settings() -> None:
     assert controls.mode_dropdown.disabled is True
     assert controls.slave_field.disabled is True
     assert controls.scan_rate_field.disabled is True
+
+
+def test_invalid_tcp_connect_shows_error_and_refreshes() -> None:
+    page = FakePage()
+    settings = Settings()
+    settings.modbus_mode = 1
+    settings.tcp_port = "70000"
+    comm = RejectingTcpComm()
+    view = build_main_view(page, settings=settings, comm=comm)
+    assert isinstance(view.data, MainViewController)
+    controls = view.data.controls
+    assert controls.connect_button.on_click is not None
+
+    controls.connect_button.on_click()
+
+    assert comm.connected is False
+    assert comm.tcp_args == (settings.slave_ip, 70000, settings.time_out)
+    assert page.snack_bar is not None
+    assert isinstance(page.snack_bar.content, ft.Text)
+    assert "TCP port 70000 out of range" in page.snack_bar.content.value
+    assert controls.read_write_button.disabled is True
+    assert page.update_count >= 1
 
 
 def test_write_single_coil_locks_quantity_to_one() -> None:
@@ -194,3 +233,25 @@ def test_transaction_refreshes_packets_and_errors_status() -> None:
 
     assert controls.packets_status.value == "Packets: 1"
     assert controls.errors_status.value == "Errors: 2"
+
+
+def test_menu_settings_opens_dialog_with_current_flet_api() -> None:
+    controller, _, page = _build_controller()
+
+    controller._menu_handler("Settings")()
+
+    assert page.show_dialog_count == 1
+    assert page.dialog is not None
+    assert page.dialog.open is True
+    assert page.dialog.title == "Settings"
+
+
+def test_menu_about_opens_dialog_with_current_flet_api() -> None:
+    controller, _, page = _build_controller()
+
+    controller._menu_handler("About")()
+
+    assert page.show_dialog_count == 1
+    assert page.dialog is not None
+    assert page.dialog.open is True
+    assert page.dialog.title == "About fModMaster"

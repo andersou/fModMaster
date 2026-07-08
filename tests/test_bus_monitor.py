@@ -20,6 +20,8 @@ class FakePage:
     def __init__(self) -> None:
         self.dialog: ft.AlertDialog | None = None
         self.overlay: list[ft.Control] = []
+        self.show_dialog_count = 0
+        self.pop_dialog_count = 0
         self.update_count = 0
 
     def run_task(
@@ -37,6 +39,15 @@ class FakePage:
 
     def update(self) -> None:
         self.update_count += 1
+
+    def show_dialog(self, dialog: ft.AlertDialog) -> None:
+        self.dialog = dialog
+        self.show_dialog_count += 1
+
+    def pop_dialog(self) -> None:
+        self.pop_dialog_count += 1
+        if self.dialog is not None:
+            self.dialog.open = False
 
 
 class FakeComm:

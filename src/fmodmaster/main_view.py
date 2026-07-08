@@ -10,12 +10,18 @@ file until later wiring tasks split dialogs/tools into their own modules.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import webbrowser
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Final, Protocol, assert_never
 
 import flet as ft
 
+from .bus_monitor import BusMonitorController, build_bus_monitor_dialog
 from .config import Settings
 from .modbus_comm import (
     FC_READ_COILS,
@@ -29,6 +35,7 @@ from .modbus_comm import (
     ModbusComm,
 )
 from .registers import Base, RegistersModel, build_grid, is_signed_visible
+from .tools_view import ToolsController, build_tools_dialog
 
 
 class PageLike(Protocol):
@@ -37,6 +44,7 @@ class PageLike(Protocol):
     appbar: ft.AppBar | None
     snack_bar: ft.SnackBar | None
     dialog: ft.AlertDialog | None
+    overlay: list[Any]
 
     def run_thread(self, handler: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
         ...
@@ -52,16 +60,25 @@ class PageLike(Protocol):
     def update(self) -> None:
         ...
 
+    def show_dialog(self, dialog: ft.AlertDialog) -> None:
+        ...
+
+    def pop_dialog(self) -> None:
+        ...
+
 
 class SettingsLike(Protocol):
     tcp_port: str
     slave_ip: str
+    serial_dev: str
+    serial_port: str
     serial_port_name: str
     baud: str
     data_bits: str
     stop_bits: str
     parity: str
     rts: str
+    max_no_of_lines: str
     slave_id: int
     scan_rate: int
     function_code: int
@@ -71,6 +88,16 @@ class SettingsLike(Protocol):
     modbus_mode: int
     time_out: str
     base_addr: str
+    logging_level: int
+
+    def save_settings(self, path: str | None = None) -> None:
+        ...
+
+    def load_session(self, path: str) -> None:
+        ...
+
+    def save_session(self, path: str) -> None:
+        ...
 
 
 class CommLike(Protocol):
@@ -88,6 +115,7 @@ class CommLike(Protocol):
     values: list[Any]
     write_values: list[Any]
     valid: bool
+    on_raw: Callable[[str, bytes], None] | None
 
     def connect_rtu(
         self,
@@ -117,6 +145,9 @@ class CommLike(Protocol):
         ...
 
     def reset_counters(self) -> None:
+        ...
+
+    def report_slave_id(self, slave: int | None = None) -> tuple[bool, int | None, bytes]:
         ...
 
 
@@ -167,6 +198,52 @@ class MainViewControls:
     base_addr_status: ft.Text
     packets_status: ft.Text
     errors_status: ft.Text
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionRequest:
+    mode: str
+    slave_ip: str
+    tcp_port: int
+    timeout: int | str | float
+    serial_port_name: str
+    baud: int
+    parity_char: str
+    data_bits: int
+    stop_bits: int
+    rts: str
+
+
+@dataclass(slots=True)  # noqa: MUTABLE_OK - exposes mutable dialog fields to tests.
+class RtuSettingsDialogData:
+    serial_dev: ft.TextField
+    serial_port: ft.TextField
+    baud: ft.TextField
+    data_bits: ft.TextField
+    stop_bits: ft.TextField
+    parity: ft.TextField
+    rts: ft.TextField
+
+
+@dataclass(slots=True)  # noqa: MUTABLE_OK - exposes mutable dialog fields to tests.
+class TcpSettingsDialogData:
+    slave_ip: ft.TextField
+    tcp_port: ft.TextField
+
+
+@dataclass(slots=True)  # noqa: MUTABLE_OK - exposes mutable dialog fields to tests.
+class GeneralSettingsDialogData:
+    time_out: ft.TextField
+    max_no_of_lines: ft.TextField
+    base_addr: ft.TextField
+
+
+@dataclass(frozen=True, slots=True)
+class ModalDialogSpec:
+    title: str
+    content: ft.Control
+    data: RtuSettingsDialogData | TcpSettingsDialogData | GeneralSettingsDialogData
+    save: Callable[..., None]
 
 
 _MODE_RTU: Final = "RTU"
@@ -462,31 +539,38 @@ class MainViewController:
         c.scan_button.on_click = self._on_scan_click
         c.clear_table_button.on_click = self._on_clear_table_click
         c.reset_counters_button.on_click = self._on_reset_counters_click
-        for button, label in (
-            (c.load_session_button, "Load Session"),
-            (c.save_session_button, "Save Session"),
-            (c.log_file_button, "Log File"),
-            (c.bus_monitor_button, "Bus Monitor"),
-            (c.tools_button, "Tools"),
-            (c.settings_button, "Settings"),
-            (c.exit_button, "Exit"),
-        ):
-            button.on_click = self._stub_handler(label)
+        c.load_session_button.on_click = self._load_session_clicked
+        c.save_session_button.on_click = self._save_session_clicked
+        c.log_file_button.on_click = self._open_log_file
+        c.bus_monitor_button.on_click = self._show_bus_monitor
+        c.tools_button.on_click = self._show_tools
+        c.settings_button.on_click = self._show_general_settings
+        c.exit_button.on_click = self._close_dialog
         c.about_button.on_click = self._show_about
 
-    def _menu_handler(self, label: str) -> Callable[[], None]:
-        handlers: dict[str, Callable[[], None]] = {
+    def _menu_handler(self, label: str) -> Callable[..., None]:
+        handlers: dict[str, Callable[..., None]] = {
+            "Load Session": self._load_session_clicked,
+            "Save Session": self._save_session_clicked,
             "Connect": self._on_connect_click,
             "Read / Write": self._on_read_write_click,
             "Scan": self._on_scan_click,
             "Clear Table": self._on_clear_table_click,
             "Reset Counters": self._on_reset_counters_click,
+            "Modbus RTU": self._show_rtu_settings,
+            "Modbus TCP": self._show_tcp_settings,
+            "Settings": self._show_general_settings,
+            "Log File": self._open_log_file,
+            "Bus Monitor": self._show_bus_monitor,
+            "Tools": self._show_tools,
+            "Modbus Manual": self._open_modbus_manual,
             "About": self._show_about,
+            "Exit": self._close_dialog,
         }
         return handlers.get(label, self._stub_handler(label))
 
-    def _stub_handler(self, label: str) -> Callable[[], None]:
-        def show_stub() -> None:
+    def _stub_handler(self, label: str) -> Callable[..., None]:
+        def show_stub(*_: Any) -> None:
             self._show_snackbar(f"{label} will be wired in a later task.")
 
         return show_stub
@@ -510,7 +594,18 @@ class MainViewController:
         self.schedule_refresh()
 
     def _on_connect_click(self) -> None:
-        self._run_worker(self._toggle_connection)
+        request: ConnectionRequest | None = None
+        if not self.comm.connected:
+            self._sync_comm_from_controls()
+            try:
+                request = self._connection_request()
+            except ValueError as exc:
+                self._show_snackbar(str(exc))
+                return
+        self._run_worker(
+            lambda: self._toggle_connection(request),
+            on_value_error=self._show_connection_error,
+        )
 
     def _on_read_write_click(self) -> None:
         if not self.comm.connected:
@@ -537,49 +632,277 @@ class MainViewController:
         self.comm.reset_counters()
         self.schedule_refresh()
 
-    def _show_about(self) -> None:
-        self.page.dialog = ft.AlertDialog(
+    def _show_bus_monitor(self, *_: Any) -> None:
+        dialog = build_bus_monitor_dialog(self.page, self.comm, self.settings)
+        if isinstance(dialog.data, BusMonitorController):
+            dialog.data.open()
+            return
+        self.page.show_dialog(dialog)
+
+    def _show_tools(self, *_: Any) -> None:
+        dialog = build_tools_dialog(self.page, self.comm, self.settings)
+        if isinstance(dialog.data, ToolsController):
+            dialog.data.open()
+            return
+        self.page.show_dialog(dialog)
+
+    def _show_rtu_settings(self, *_: Any) -> None:
+        data = RtuSettingsDialogData(
+            serial_dev=ft.TextField(value=self.settings.serial_dev, label="Serial device"),
+            serial_port=ft.TextField(value=self.settings.serial_port, label="Serial port"),
+            baud=ft.TextField(value=self.settings.baud, label="Baud"),
+            data_bits=ft.TextField(value=self.settings.data_bits, label="Data Bits"),
+            stop_bits=ft.TextField(value=self.settings.stop_bits, label="Stop Bits"),
+            parity=ft.TextField(value=self.settings.parity, label="Parity"),
+            rts=ft.TextField(value=self.settings.rts, label="RTS"),
+        )
+
+        def save(*_: Any) -> None:
+            self.settings.serial_dev = data.serial_dev.value or self.settings.serial_dev
+            self.settings.serial_port = data.serial_port.value or self.settings.serial_port
+            self.settings.serial_port_name = Settings._compute_serial_port_name(
+                self.settings.serial_dev,
+                self.settings.serial_port,
+            )
+            self.settings.baud = data.baud.value or self.settings.baud
+            self.settings.data_bits = data.data_bits.value or self.settings.data_bits
+            self.settings.stop_bits = data.stop_bits.value or self.settings.stop_bits
+            self.settings.parity = data.parity.value or self.settings.parity
+            self.settings.rts = data.rts.value or self.settings.rts
+            self.settings.save_settings()
+            self._close_dialog()
+
+        self._open_modal_dialog(
+            ModalDialogSpec(
+                "Modbus RTU Settings",
+                ft.Column(
+                    [
+                        data.serial_dev,
+                        data.serial_port,
+                        data.baud,
+                        data.data_bits,
+                        data.stop_bits,
+                        data.parity,
+                        data.rts,
+                    ],
+                    width=420,
+                    spacing=8,
+                ),
+                data,
+                save,
+            )
+        )
+
+    def _show_tcp_settings(self, *_: Any) -> None:
+        data = TcpSettingsDialogData(
+            slave_ip=ft.TextField(value=self.settings.slave_ip, label="Slave IP"),
+            tcp_port=ft.TextField(value=self.settings.tcp_port, label="TCP Port"),
+        )
+
+        def save(*_: Any) -> None:
+            self.settings.slave_ip = data.slave_ip.value or self.settings.slave_ip
+            self.settings.tcp_port = data.tcp_port.value or self.settings.tcp_port
+            self.settings.save_settings()
+            self._close_dialog()
+
+        self._open_modal_dialog(
+            ModalDialogSpec(
+                "Modbus TCP Settings",
+                ft.Column([data.slave_ip, data.tcp_port], width=420, spacing=8),
+                data,
+                save,
+            )
+        )
+
+    def _show_general_settings(self, *_: Any) -> None:
+        data = GeneralSettingsDialogData(
+            time_out=ft.TextField(value=self.settings.time_out, label="Response Timeout (ms)"),
+            max_no_of_lines=ft.TextField(
+                value=self.settings.max_no_of_lines,
+                label="Max No Of Bus Monitor Lines",
+            ),
+            base_addr=ft.TextField(value=self.settings.base_addr, label="Base Addr"),
+        )
+
+        def save(*_: Any) -> None:
+            self.settings.time_out = data.time_out.value or self.settings.time_out
+            self.settings.max_no_of_lines = (
+                data.max_no_of_lines.value or self.settings.max_no_of_lines
+            )
+            self.settings.base_addr = data.base_addr.value or self.settings.base_addr
+            self.settings.save_settings()
+            self._refresh_controls(rebuild_grid=True)
+            self._close_dialog()
+
+        self._open_modal_dialog(
+            ModalDialogSpec(
+                "Settings",
+                ft.Column(
+                    [data.time_out, data.max_no_of_lines, data.base_addr],
+                    width=420,
+                    spacing=8,
+                ),
+                data,
+                save,
+            )
+        )
+
+    def _open_modal_dialog(self, spec: ModalDialogSpec) -> None:
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=spec.title,
+            content=spec.content,
+            actions=[
+                ft.TextButton("OK", on_click=spec.save),
+                ft.TextButton("Cancel", on_click=self._close_dialog),
+            ],
+            open=True,
+        )
+        dialog.data = spec.data
+        self.page.show_dialog(dialog)
+
+    def _show_about(self, *_: Any) -> None:
+        dialog = ft.AlertDialog(
             modal=True,
             title="About fModMaster",
-            content=ft.Text("fModMaster Modbus master interface."),
+            content=ft.Text(
+                "fModMaster 0.1.0\n"
+                "A Flet recreation of qModMaster.\n"
+                "Credits: qModMaster/libmodbus/QsLog project references."
+            ),
             actions=[ft.TextButton("OK", on_click=self._close_dialog)],
             open=True,
         )
-        self.schedule_refresh()
+        self.page.show_dialog(dialog)
 
-    def _close_dialog(self) -> None:
-        if self.page.dialog is not None:
-            self.page.dialog.open = False
-        self.schedule_refresh()
+    def _close_dialog(self, *_: Any) -> None:
+        self.page.pop_dialog()
 
-    def _run_worker(self, handler: Callable[[], None]) -> None:
+    def _open_log_file(self, *_: Any) -> None:
+        log_path = Path.cwd() / "fModMaster.log"
+        if not _open_local_path(log_path):
+            self._show_snackbar(f"Could not open log file: {log_path}")
+
+    def _open_modbus_manual(self, *_: Any) -> None:
+        manual_path = _manual_path()
+        if manual_path is None:
+            self._show_snackbar("Modbus manual not found.")
+            return
+        if not _open_local_path(manual_path):
+            self._show_snackbar(f"Could not open Modbus manual: {manual_path}")
+
+    def _load_session_clicked(self, *_: Any) -> None:
+        self.page.run_task(self._load_session_async)
+
+    async def _load_session_async(self) -> None:
+        picker = _file_picker_for_page(self.page)
+        files = await picker.pick_files(
+            dialog_title="Load Session",
+            file_type=ft.FilePickerFileType.CUSTOM,
+            allowed_extensions=["ses"],
+            allow_multiple=False,
+        )
+        if files:
+            path = files[0].path
+            if path:
+                self._load_session_from_path(path)
+
+    def _load_session_from_path(self, path: str) -> None:
+        self.settings.load_session(path)
+        self._load_main_fields_from_settings()
+        self._refresh_controls(rebuild_grid=True)
+        self.page.update()
+
+    def _save_session_clicked(self, *_: Any) -> None:
+        self.page.run_task(self._save_session_async)
+
+    async def _save_session_async(self) -> None:
+        picker = _file_picker_for_page(self.page)
+        path = await picker.save_file(
+            dialog_title="Save Session",
+            file_name="session.ses",
+            file_type=ft.FilePickerFileType.CUSTOM,
+            allowed_extensions=["ses"],
+        )
+        if path is not None:
+            self._save_session_to_path(path)
+
+    def _save_session_to_path(self, path: str) -> None:
+        self._sync_settings_from_controls()
+        self.settings.save_session(path)
+
+    def _load_main_fields_from_settings(self) -> None:
+        self.controls.mode_dropdown.value = _MODE_TCP if self.settings.modbus_mode == 1 else _MODE_RTU
+        self.controls.slave_field.value = str(self.settings.slave_id)
+        self.controls.scan_rate_field.value = str(self.settings.scan_rate)
+        self.controls.function_dropdown.value = str(_normalize_function_code(self.settings.function_code))
+        self.controls.start_addr_field.value = str(self.settings.start_addr)
+        self.controls.qty_field.value = str(max(self.settings.no_of_regs, 1))
+        self.controls.data_format_dropdown.value = _format_from_base(self.settings.base)
+
+    def _sync_settings_from_controls(self) -> None:
+        self.settings.modbus_mode = 1 if self._mode() == _MODE_TCP else 0
+        self.settings.slave_id = _parse_int(self.controls.slave_field.value, self.settings.slave_id)
+        self.settings.scan_rate = _parse_int(self.controls.scan_rate_field.value, self.settings.scan_rate)
+        self.settings.function_code = _function_index(self._function_spec().code)
+        self.settings.start_addr = self._start_address()
+        self.settings.no_of_regs = _parse_int(self.controls.qty_field.value, self.settings.no_of_regs)
+        self.settings.base = _base_to_settings_value(self._data_base())
+
+    def _run_worker(
+        self,
+        handler: Callable[[], None],
+        *,
+        on_value_error: Callable[[ValueError], None] | None = None,
+    ) -> None:
         def worker() -> None:
-            handler()
-            self.schedule_refresh()
+            try:
+                handler()
+            except ValueError as exc:
+                if on_value_error is None:
+                    raise
+                on_value_error(exc)
+            finally:
+                self.schedule_refresh()
 
         self.page.run_thread(worker)
 
-    def _toggle_connection(self) -> None:
+    def _connection_request(self) -> ConnectionRequest:
+        mode = self._mode()
+        return ConnectionRequest(
+            mode=mode,
+            slave_ip=self.settings.slave_ip,
+            tcp_port=_parse_tcp_port(self.settings.tcp_port) if mode == _MODE_TCP else 502,
+            timeout=self.settings.time_out,
+            serial_port_name=self.settings.serial_port_name,
+            baud=_parse_int(self.settings.baud, 9600),
+            parity_char=_parity_char(self.settings.parity),
+            data_bits=_parse_int(self.settings.data_bits, 8),
+            stop_bits=_parse_int(self.settings.stop_bits, 1),
+            rts=self.settings.rts,
+        )
+
+    def _toggle_connection(self, request: ConnectionRequest | None) -> None:
         if self.comm.connected:
             self.comm.disconnect()
             return
-        self._sync_comm_from_controls()
-        mode = self._mode()
-        if mode == _MODE_TCP:
+        if request is None:
+            return
+        if request.mode == _MODE_TCP:
             self.comm.connect_tcp(
-                self.settings.slave_ip,
-                _parse_int(self.settings.tcp_port, 502),
-                self.settings.time_out,
+                request.slave_ip,
+                request.tcp_port,
+                request.timeout,
             )
             return
         self.comm.connect_rtu(
-            self.settings.serial_port_name,
-            _parse_int(self.settings.baud, 9600),
-            _parity_char(self.settings.parity),
-            _parse_int(self.settings.data_bits, 8),
-            _parse_int(self.settings.stop_bits, 1),
-            self.settings.rts,
-            self.settings.time_out,
+            request.serial_port_name,
+            request.baud,
+            request.parity_char,
+            request.data_bits,
+            request.stop_bits,
+            request.rts,
+            request.timeout,
         )
 
     def _toggle_scan(self) -> None:
@@ -664,6 +987,14 @@ class MainViewController:
         self.page.snack_bar = ft.SnackBar(ft.Text(message), open=True)
         self.schedule_refresh()
 
+    def _show_connection_error(self, exc: ValueError) -> None:
+        self.page.run_task(self._show_snackbar_async, str(exc))
+
+    async def _show_snackbar_async(self, message: str) -> None:
+        self.page.snack_bar = ft.SnackBar(ft.Text(message), open=True)
+        self._refresh_controls(rebuild_grid=True)
+        self.page.update()
+
     def _mode(self) -> str:
         return self.controls.mode_dropdown.value or _MODE_RTU
 
@@ -741,6 +1072,25 @@ def _format_from_base(raw: int) -> str:
             assert_never(unreachable)
 
 
+def _base_to_settings_value(base: Base) -> int:
+    match base:
+        case Base.Bin:
+            return 2
+        case Base.Dec:
+            return 1
+        case Base.Hex:
+            return 0
+        case unreachable:
+            assert_never(unreachable)
+
+
+def _function_index(code: int) -> int:
+    for index, spec in enumerate(_FUNCTION_SPECS):
+        if spec.code == code:
+            return index
+    return 0
+
+
 def _clamp_quantity(qty: int, spec: FunctionSpec) -> int:
     return min(max(qty, spec.min_qty), spec.max_qty)
 
@@ -750,6 +1100,13 @@ def _parse_int(raw: str | int | float | None, default: int) -> int:
         return int(str(raw))
     except (TypeError, ValueError):
         return default
+
+
+def _parse_tcp_port(raw: str) -> int:
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError("Connection failed: TCP port must be a number (1..65535).") from exc
 
 
 def _parity_char(raw: str) -> str:
@@ -765,3 +1122,45 @@ def _connection_text(connected: bool, mode: str | None) -> str:
     if not connected:
         return "Disconnected"
     return f"Connected ({mode or 'unknown'})"
+
+
+def _file_picker_for_page(page: PageLike) -> ft.FilePicker:
+    picker = ft.FilePicker()
+    overlay = getattr(page, "overlay", None)
+    if isinstance(overlay, list) and picker not in overlay:
+        overlay.append(picker)
+    return picker
+
+
+def _open_local_path(path: Path) -> bool:
+    if webbrowser.open(str(path)):
+        return True
+    try:
+        if sys.platform.startswith("win"):
+            startfile = getattr(os, "startfile", None)
+            if callable(startfile):
+                startfile(str(path))
+                return True
+            return False
+        if sys.platform == "darwin":
+            completed = subprocess.run(["open", str(path)], check=False)
+        else:
+            completed = subprocess.run(["xdg-open", str(path)], check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
+
+
+def _manual_path() -> Path | None:
+    project_root = Path(__file__).resolve().parents[2]
+    candidates = (
+        project_root / "docs" / "ManModbus" / "index.html",
+        project_root
+        / "docs"
+        / "qmodmaster"
+        / "sourcecode-ref"
+        / "qModMaster"
+        / "ManModbus"
+        / "index.html",
+    )
+    return next((candidate for candidate in candidates if candidate.exists()), None)

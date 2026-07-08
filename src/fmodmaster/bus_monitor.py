@@ -37,6 +37,12 @@ class PageLike(Protocol):
     def update(self) -> None:
         ...
 
+    def show_dialog(self, dialog: ft.AlertDialog) -> None:
+        ...
+
+    def pop_dialog(self) -> None:
+        ...
+
 
 class CommLike(Protocol):
     mode: str | None
@@ -179,10 +185,9 @@ class BusMonitorController:
         self.model.enable_capture(True)
         self._previous_on_raw = self.comm.on_raw
         self.comm.on_raw = self._on_raw
-        self.page.dialog = self.controls.dialog
         self.controls.dialog.open = True
         self._refresh_controls()
-        self.page.update()
+        self.page.show_dialog(self.controls.dialog)
         return self.controls.dialog
 
     def close(self) -> None:
@@ -192,7 +197,7 @@ class BusMonitorController:
         self.model.clear()
         self.controls.dialog.open = False
         self._refresh_controls()
-        self.page.update()
+        self.page.pop_dialog()
 
     def clear(self) -> None:
         self.model.clear()

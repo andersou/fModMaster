@@ -541,7 +541,8 @@ class ModbusComm:
         except AttributeError:
             # Fallback for older/newer naming.
             try:
-                rr = self._client.report_slave_id(device_id=dev_id)
+                fallback = getattr(self._client, "report_slave_id")
+                rr = fallback(device_id=dev_id)
             except Exception as exc:  # pragma: no cover - defensive
                 _logger.error("report_slave_id fallback failed: %s", exc)
                 return (False, None, b"")
