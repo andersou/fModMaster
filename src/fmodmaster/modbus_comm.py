@@ -26,6 +26,7 @@ from typing import Any, Callable, Optional, Union
 from pymodbus import ModbusException
 from pymodbus.client import ModbusSerialClient, ModbusTcpClient
 
+from .bus_monitor import BusMonitorModel
 from .logging_helper import get_logger
 
 _logger = get_logger(__name__)
@@ -135,6 +136,7 @@ class ModbusComm:
         self._page = page
         self._refresh_cb: Optional[RefreshCb] = refresh_cb
         self.on_raw: Optional[OnRaw] = on_raw
+        self.bus_monitor_model = BusMonitorModel()
 
         # Connection state.
         self.connected: bool = False
@@ -694,9 +696,11 @@ class ModbusComm:
         ``busMonitorRequestData`` C callbacks (modbusadapter.cpp:378-415)
         with pymodbus' built-in packet trace hook.
         """
+        direction = _DIR_TX if sending else _DIR_RX
+        self.bus_monitor_model.add_raw(direction, bytes(data), mode=self.mode)
         if self.on_raw is not None:
             try:
-                self.on_raw(_DIR_TX if sending else _DIR_RX, bytes(data))
+                self.on_raw(direction, bytes(data))
             except Exception as exc:  # pragma: no cover - defensive
                 _logger.warn("on_raw hook failed (ignored): %s", exc)
         return data

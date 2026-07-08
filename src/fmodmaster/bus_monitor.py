@@ -55,6 +55,7 @@ class PageLike(Protocol):
 class CommLike(Protocol):
     mode: str | None
     on_raw: Callable[[str, bytes], None] | None
+    bus_monitor_model: Any
 
 
 class SettingsLike(Protocol):
@@ -149,19 +150,20 @@ class BusMonitorModel:
         self.capture_enabled = enabled
 
     def add_raw(self, direction: str, data: bytes, *, mode: str | None) -> RawLine | None:
-        if not self.capture_enabled:
-            return None
         line_type = _line_type(direction)
         line = RawLine(line_type, _timestamp(), mode or "-", data.hex().upper())
         self._append(line)
         return line
 
     def add_sys(self, message: str, *, mode: str | None) -> RawLine | None:
-        if not self.capture_enabled:
-            return None
         line = RawLine("Sys", _timestamp(), mode or "-", message)
         self._append(line)
         return line
+
+    def set_max_lines(self, max_lines: int) -> None:
+        self.max_lines = max(max_lines, 1)
+        while len(self.lines) > self.max_lines:
+            self.lines.pop(0)
 
     def clear(self) -> None:
         self.lines.clear()
@@ -183,12 +185,14 @@ class BusMonitorController:
         self.page = page
         self.comm = comm
         self.settings = settings
-        self.model = BusMonitorModel(_max_lines_from_settings(settings))
+        self.model = getattr(
+            comm, "bus_monitor_model", BusMonitorModel(_max_lines_from_settings(settings))
+        )
         self._previous_on_raw: Callable[[str, bytes], None] | None = None
         self.controls = self._build_controls()
 
     def open(self) -> ft.AlertDialog:
-        self.model.max_lines = _max_lines_from_settings(self.settings)
+        self.model.set_max_lines(_max_lines_from_settings(self.settings))
         self.model.enable_capture(True)
         self._previous_on_raw = self.comm.on_raw
         self.comm.on_raw = self._on_raw
@@ -201,7 +205,6 @@ class BusMonitorController:
         self.model.enable_capture(False)
         self.comm.on_raw = self._previous_on_raw
         self._previous_on_raw = None
-        self.model.clear()
         self.controls.dialog.open = False
         self._refresh_controls()
         self.page.pop_dialog()
@@ -252,12 +255,12 @@ class BusMonitorController:
         return BusMonitorControls(raw_list, detail_text, dialog)
 
     def _on_raw(self, direction: str, data: bytes) -> None:
-        self.page.run_task(self._append_raw_async, direction, bytes(data), self.comm.mode)
+        model = getattr(self.comm, "bus_monitor_model", None)
+        if model is not self.model:
+            self.model.add_raw(direction, bytes(data), mode=self.comm.mode)
+        self.page.run_task(self._append_raw_async)
 
-    async def _append_raw_async(
-        self, direction: str, data: bytes, mode: str | None
-    ) -> None:
-        self.model.add_raw(direction, data, mode=mode)
+    async def _append_raw_async(self) -> None:
         self._refresh_controls()
         self.page.update()
 
