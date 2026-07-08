@@ -24,6 +24,12 @@ def _text_cell(cell: ft.DataCell) -> ft.Text:
     return content
 
 
+def _container_cell(cell: ft.DataCell) -> ft.Container:
+    content = cell.content
+    assert isinstance(content, ft.Container)
+    return content
+
+
 def _field_cell(cell: ft.DataCell) -> ft.TextField:
     content = cell.content
     assert isinstance(content, ft.TextField)
@@ -73,10 +79,11 @@ class TestBuildGrid:
 
         assert len(table.columns) == 1
         assert table.rows[0].data == "12"
-        unused = _text_cell(multi.rows[0].cells[0])
-        assert unused.value == "x"
-        assert unused.color == ft.Colors.ERROR
-        assert unused.bgcolor == ft.Colors.SURFACE_CONTAINER_HIGHEST
+        unused_container = _container_cell(multi.rows[0].cells[0])
+        unused_text = _text_cell(multi.rows[0].cells[0])
+        assert unused_text.value == "x"
+        assert unused_text.color == ft.Colors.ERROR
+        assert unused_container.bgcolor == ft.Colors.SURFACE_CONTAINER_HIGHEST
 
     def test_values_and_tooltips_render_in_display_base(self) -> None:
         table = build_grid(
