@@ -194,7 +194,6 @@ class MainViewControls:
     tools_button: ft.OutlinedButton
     settings_button: ft.OutlinedButton
     about_button: ft.OutlinedButton
-    exit_button: ft.OutlinedButton
     connection_status: ft.Text
     base_addr_status: ft.Text
     packets_status: ft.Text
@@ -429,7 +428,6 @@ class MainViewController:
             tools_button=ft.OutlinedButton("Tools"),
             settings_button=ft.OutlinedButton("Settings"),
             about_button=ft.OutlinedButton("About"),
-            exit_button=ft.OutlinedButton("Exit"),
             connection_status=ft.Text(),
             base_addr_status=ft.Text(),
             packets_status=ft.Text(),
@@ -456,7 +454,7 @@ class MainViewController:
     def _build_menu_bar(self) -> ft.MenuBar:
         return ft.MenuBar(
             controls=[
-                self._submenu("File", ["Load Session", "Save Session", "Exit"]),
+                self._submenu("File", ["Load Session", "Save Session"]),
                 self._submenu("Options", ["Modbus RTU", "Modbus TCP", "Settings"]),
                 self._submenu("View", ["Log File", "Bus Monitor"]),
                 self._submenu("Commands", ["Connect", "Read / Write", "Scan", "Clear Table", "Reset Counters", "Tools"]),
@@ -482,7 +480,6 @@ class MainViewController:
                 ft.Container(c.log_file_button, height=40),
                 ft.Container(c.bus_monitor_button, height=40),
                 ft.Container(c.settings_button, height=40),
-                ft.Container(c.exit_button, height=40),
             ],
             wrap=True,
             spacing=8,
@@ -572,7 +569,6 @@ class MainViewController:
         c.bus_monitor_button.on_click = self._show_bus_monitor
         c.tools_button.on_click = self._show_tools
         c.settings_button.on_click = self._show_general_settings
-        c.exit_button.on_click = self._close_dialog
         c.about_button.on_click = self._show_about
 
     def _menu_handler(self, label: str) -> Callable[..., None]:
@@ -592,7 +588,6 @@ class MainViewController:
             "Tools": self._show_tools,
             "Modbus Manual": self._open_modbus_manual,
             "About": self._show_about,
-            "Exit": self._close_dialog,
         }
         return handlers.get(label, self._stub_handler(label))
 

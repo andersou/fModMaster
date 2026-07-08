@@ -23,13 +23,9 @@ _EMPTY_DETAIL: Final = "Select a raw line to decode ADU/PDU fields."
 
 
 def _file_picker_for_page(page: PageLike) -> ft.FilePicker:
-    overlay = getattr(page, "overlay", None)
-    if isinstance(overlay, list):
-        for control in overlay:
-            if isinstance(control, ft.FilePicker):
-                return control
     picker = ft.FilePicker()
-    if isinstance(overlay, list):
+    overlay = page.overlay
+    if picker not in overlay:
         overlay.append(picker)
     return picker
 
@@ -141,7 +137,6 @@ class BusMonitorControls:
     raw_list: ft.ListView
     detail_text: ft.Text
     dialog: ft.AlertDialog
-    file_picker: ft.FilePicker
 
 
 class BusMonitorModel:
@@ -202,7 +197,7 @@ class BusMonitorController:
         self.page.show_dialog(self.controls.dialog)
         return self.controls.dialog
 
-    def close(self) -> None:
+    def close(self, _: Any = None) -> None:
         self.model.enable_capture(False)
         self.comm.on_raw = self._previous_on_raw
         self._previous_on_raw = None
@@ -211,7 +206,7 @@ class BusMonitorController:
         self._refresh_controls()
         self.page.pop_dialog()
 
-    def clear(self) -> None:
+    def clear(self, _: Any = None) -> None:
         self.model.clear()
         self._refresh_controls()
         self.page.update()
@@ -232,7 +227,6 @@ class BusMonitorController:
     def _build_controls(self) -> BusMonitorControls:
         raw_list = ft.ListView(expand=True, height=260, spacing=2, auto_scroll=True)
         detail_text = ft.Text(_EMPTY_DETAIL, selectable=True)
-        file_picker = _file_picker_for_page(self.page)
         dialog = ft.AlertDialog(
             modal=False,
             title="Bus Monitor",
@@ -255,7 +249,7 @@ class BusMonitorController:
             open=False,
         )
         dialog.data = self
-        return BusMonitorControls(raw_list, detail_text, dialog, file_picker)
+        return BusMonitorControls(raw_list, detail_text, dialog)
 
     def _on_raw(self, direction: str, data: bytes) -> None:
         self.page.run_task(self._append_raw_async, direction, bytes(data), self.comm.mode)
@@ -280,23 +274,28 @@ class BusMonitorController:
             self.controls.detail_text.value = _EMPTY_DETAIL
 
     def _line_button(self, index: int, line: RawLine) -> ft.TextButton:
-        def choose() -> None:
+        def choose(_: Any = None) -> None:
             self.select_line(index)
 
         return ft.TextButton(line.text, on_click=choose)
 
-    def _save_clicked(self) -> None:
+    def _save_clicked(self, _: Any = None) -> None:
         self.page.run_task(self._save_clicked_async)
 
     async def _save_clicked_async(self) -> None:
-        path = await self.controls.file_picker.save_file(
-            "Save Bus Monitor Raw Data",
-            "bus-monitor.txt",
-            file_type=ft.FilePickerFileType.CUSTOM,
-            allowed_extensions=["txt"],
-        )
-        if path is not None:
-            self.save_to_path(path)
+        picker = _file_picker_for_page(self.page)
+        try:
+            path = await picker.save_file(
+                "Save Bus Monitor Raw Data",
+                "bus-monitor.txt",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["txt"],
+            )
+            if path is not None:
+                self.save_to_path(path)
+        finally:
+            if picker in self.page.overlay:
+                self.page.overlay.remove(picker)
 
 
 def build_bus_monitor_dialog(
