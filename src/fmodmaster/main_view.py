@@ -10,6 +10,7 @@ file until later wiring tasks split dialogs/tools into their own modules.
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -47,6 +48,29 @@ from .tools_view import ToolsController, build_tools_dialog
 from .logging_helper import get_logger
 
 _logger = get_logger(__name__)
+
+# Log records at this level or above are surfaced to the user as a snack bar.
+_SNACKBAR_LOG_LEVEL = logging.INFO
+
+
+class SnackbarLogHandler(logging.Handler):
+    """Bridge log records to the UI snack bar.
+
+    Registered on the ``fmodmaster`` logger so any module's INFO+ message pops
+    a snack bar. Emits are marshalled to the Flet event loop via the page's
+    ``run_task`` (logs may originate from worker threads in ModbusComm).
+    """
+
+    def __init__(self, controller: "MainViewController") -> None:
+        super().__init__(level=_SNACKBAR_LOG_LEVEL)
+        self._controller = controller
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = self.format(record)
+            self._controller.show_log_snackbar(message)
+        except Exception:  # pragma: no cover - defensive: never break logging
+            pass
 
 
 class PageLike(Protocol):
@@ -389,6 +413,15 @@ class MainViewController:
         self.root = self._build_layout()
         self._bind_handlers()
         self._refresh_controls(rebuild_grid=True)
+        # Surface INFO+ log records as snack bars.
+        # Register on every fmodmaster.* logger (each has propagate=False per
+        # logging_helper, so the handler must be attached to each module whose
+        # logs we want to surface).
+        self._snackbar_log_handler = SnackbarLogHandler(self)
+        # Only surface logs from the modbus_comm module as snackbars.  Manual
+        # snackbars (via _show_snackbar) remain the path for user-facing
+        # messages from main_view itself, keeping them clean and friendly.
+        logging.getLogger("fmodmaster.modbus_comm").addHandler(self._snackbar_log_handler)
 
     def schedule_refresh(self) -> None:
         self.page.run_task(self._refresh_async)
@@ -1318,19 +1351,29 @@ class MainViewController:
         )
 
     def _show_snackbar(self, message: str) -> None:
-        _logger.warning("SNACKBAR: %s", message)
         # Flet 0.85.x has no page.snack_bar slot; a SnackBar is shown by
         # passing it to page.show_dialog (SnackBar is a DialogControl).
         self.page.show_dialog(ft.SnackBar(ft.Text(message)))
         self.schedule_refresh()
 
-    def _show_connection_error(self, exc: ValueError) -> None:
-        self.page.run_task(self._show_snackbar_async, str(exc))
+    def show_log_snackbar(self, message: str) -> None:
+        """Sink for SnackbarLogHandler: show a log record as a snack bar.
+
+        Marshalled to the Flet event loop because log records may be emitted
+        from ModbusComm worker threads.
+        """
+        self.page.run_task(self._show_snackbar_async, message)
 
     async def _show_snackbar_async(self, message: str) -> None:
         self.page.show_dialog(ft.SnackBar(ft.Text(message)))
         self._refresh_controls(rebuild_grid=True)
         self.page.update()
+
+    def _show_connection_error(self, exc: ValueError) -> None:
+        # Log the error for the file, then show a friendly snack bar directly
+        # (modbus_comm logs are surfaced as snack bars automatically).
+        _logger.error("Connection failed: %s", exc)
+        self._show_snackbar(str(exc))
 
     def _mode(self) -> str:
         return self.controls.mode_dropdown.value or _MODE_RTU
