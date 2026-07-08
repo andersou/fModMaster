@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Final, Protocol, assert_never
 
 import flet as ft
-import serial.tools.list_ports
+import serial.tools.list_ports  # type: ignore[import-untyped]
 
 from .bus_monitor import BusMonitorController, build_bus_monitor_dialog
 from .config import Settings

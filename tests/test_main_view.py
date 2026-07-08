@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 from collections.abc import Callable, Coroutine
+from pathlib import Path
 from typing import Any
 
 import flet as ft
-import serial.tools.list_ports
+import serial.tools.list_ports  # type: ignore[import-untyped]
 
 from fmodmaster.config import Settings
 from fmodmaster.main_view import MainViewController, build_main_view
@@ -124,21 +127,28 @@ class RejectingTcpComm(FakeComm):
 
 
 class FakeSettings(Settings):
-    """Settings subclass that tracks ``save_settings`` calls for test assertions."""
+    """Settings subclass that tracks ``save_settings`` calls for test assertions.
+
+    Redirects path-less saves to a temp file so tests never overwrite the
+    repository's ``fModMaster.ini``.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.save_count = 0
         self.last_save_path: str | None = None
+        self._default_save_path = os.path.join(
+            tempfile.gettempdir(), f"fModMaster-test-{os.getpid()}.ini"
+        )
 
     def save_settings(self, path: str | None = None) -> None:
         self.save_count += 1
         self.last_save_path = path
-        super().save_settings(path)
+        super().save_settings(path if path is not None else self._default_save_path)
 
 
 def _build_controller() -> tuple[MainViewController, FakeComm, FakePage]:
-    return _build_controller_with(FakeComm(), Settings())
+    return _build_controller_with(FakeComm(), FakeSettings())
 
 
 def _build_controller_with(
@@ -331,7 +341,10 @@ def test_menu_modbus_rtu_opens_dialog_with_serial_dropdown(monkeypatch) -> None:
     assert any(option.key == "/dev/ttyUSB0" for option in dialog_data.serial_port.options)
 
 
-def test_rtu_settings_save_updates_serial_port_name(monkeypatch) -> None:
+def test_rtu_settings_save_updates_serial_port_name(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         serial.tools.list_ports,
         "comports",
