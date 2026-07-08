@@ -296,6 +296,27 @@ class RegistersModel:
             for row in range(first_row, last_row + 1)
         )
 
+    def has_float_in_range(self) -> bool:
+        """True if any register in the writable range would be written as a
+        32-bit Float (i.e. ``_format_for(addr) is Base.Float``).
+
+        Uses the exact same per-address resolution as :meth:`collect_write_values`,
+        so a caller can reject a write that cannot be encoded in a single 16-bit
+        register (FC 06) without re-implementing the format logic.
+        """
+        if self.is_float_mode:
+            return True
+        if not self._per_address_mode:
+            return False
+        addr = self.start_addr
+        end = self.start_addr + self.qty
+        while addr < end:
+            if self._format_for(addr) is Base.Float:
+                return True
+            # A float consumes its continuation register too.
+            addr += 2 if self._format_for(addr) is Base.Float else 1
+        return False
+
     def collect_write_values(self) -> list[int] | None:
         if self._per_address_mode:
             return self._collect_per_address_write_values()
@@ -602,8 +623,14 @@ class RegistersModel:
         return float_owner_for(address, self.format_map) is not None
 
     def _build_text_field(self, cell: RegisterCell) -> ft.TextField:
+        # A cell with no register value (read placeholder "-" / "-/-") must be a
+        # blank placeholder in write mode, not a literal "-/-" that would be
+        # flagged as invalid input. Only an actual unparseable user entry is an
+        # error (handled by validate_field on change/blur).
+        has_value = cell.value is not None
+        field_value = "" if not has_value else cell.visible_text
         field = ft.TextField(
-            value="" if cell.visible_text == "-" else cell.visible_text,
+            value=field_value,
             tooltip=cell.tooltip,
             max_length=self._max_length_for(cell.address),
             counter="",
@@ -622,34 +649,51 @@ class RegistersModel:
             def validate_field() -> None:
                 if self._format_for(addr) is Base.Float:
                     _mark_text_field(
-                        field, is_valid=self._parse_edit_float(field.value) is not None
+                        field,
+                        is_valid=_field_input_valid(
+                            field.value,
+                            self._parse_edit_float(field.value) is not None,
+                        ),
                     )
                 else:
                     _mark_text_field(
                         field,
-                        is_valid=self._parse_edit_value_for(field.value, addr)
-                        is not None,
+                        is_valid=_field_input_valid(
+                            field.value,
+                            self._parse_edit_value_for(field.value, addr) is not None,
+                        ),
                     )
         elif self.is_float_mode:
 
             def validate_field() -> None:
                 _mark_text_field(
-                    field, is_valid=self._parse_edit_float(field.value) is not None
+                    field,
+                    is_valid=_field_input_valid(
+                        field.value,
+                        self._parse_edit_float(field.value) is not None,
+                    ),
                 )
         else:
 
             def validate_field() -> None:
                 _mark_text_field(
-                    field, is_valid=self._parse_edit_value(field.value) is not None
+                    field,
+                    is_valid=_field_input_valid(
+                        field.value,
+                        self._parse_edit_value(field.value) is not None,
+                    ),
                 )
 
         field.on_change = validate_field
         field.on_blur = validate_field
-        _mark_text_field(field, is_valid=cell.is_valid)
+        # No register value yet → neutral placeholder, never red (the read-mode
+        # "-" / "-/-" markers must not surface as write errors). A real invalid
+        # user entry is caught by validate_field on change/blur.
+        _mark_text_field(field, is_valid=not has_value or cell.is_valid)
         # Outline override cells so a per-address format change is visible even
         # in edit mode. Applied after _mark_text_field, which would otherwise
         # reset border_color. Error state (invalid input) takes precedence.
-        if self._is_format_overridden(cell.address) and cell.is_valid:
+        if self._is_format_overridden(cell.address) and has_value:
             field.border_color = _COLOR_OVERRIDE_BORDER
         return field
 
@@ -859,6 +903,18 @@ def _mark_text_field(field: ft.TextField, *, is_valid: bool) -> None:
     field.error = None if is_valid else _INLINE_ERROR
     field.color = _COLOR_TEXT if is_valid else _COLOR_ERROR
     field.border_color = None if is_valid else _COLOR_ERROR
+
+
+def _field_input_valid(raw: str | None, parsed_ok: bool) -> bool:
+    """Decide the inline error state for a write field.
+
+    An empty/blank field is a neutral placeholder (never red) — the read-mode
+    "-" / "-/-" markers must not surface as write errors. Only an actual
+    non-empty, unparseable entry is invalid.
+    """
+    if raw is None or not str(raw).strip():
+        return True
+    return parsed_ok
 
 
 def _is_decimal_text(text: str) -> bool:

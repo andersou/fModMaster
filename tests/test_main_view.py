@@ -46,7 +46,12 @@ class FakePage:
         self.update_count += 1
 
     def show_dialog(self, dialog: ft.AlertDialog) -> None:
-        self.dialog = dialog
+        # In Flet 0.85.x a SnackBar is shown via page.show_dialog (it is a
+        # DialogControl). Mirror that so snackbar assertions stay valid.
+        if isinstance(dialog, ft.SnackBar):
+            self.snack_bar = dialog
+        else:
+            self.dialog = dialog
         self.show_dialog_count += 1
 
     def pop_dialog(self) -> None:
@@ -256,6 +261,174 @@ def test_write_single_coil_locks_quantity_to_one() -> None:
     assert controls.qty_field.value == "1"
     assert controls.qty_field.disabled is True
     assert controls.qty_label.value == "Number of Coils"
+
+
+class TestFloatBlockedOnWriteSingleRegister:
+    """FC 06 writes a single 16-bit register, so a 32-bit Float must be blocked."""
+
+    def test_float_dropdown_option_disabled_in_fc06(self) -> None:
+        controller, _, _ = _build_controller()
+        controls = controller.controls
+
+        controls.function_dropdown.value = "6"  # FC_WRITE_SINGLE_REGISTER
+        controls.function_dropdown.on_select()
+
+        float_option = next(
+            o for o in controls.data_format_dropdown.options if o.key == "Float"
+        )
+        assert float_option.disabled is True
+        assert controller._is_single_register_write() is True
+
+    def test_float_dropdown_option_enabled_in_fc10(self) -> None:
+        controller, _, _ = _build_controller()
+        controls = controller.controls
+
+        controls.function_dropdown.value = "16"  # FC_WRITE_MULTIPLE_REGISTERS
+        controls.function_dropdown.on_select()
+
+        float_option = next(
+            o for o in controls.data_format_dropdown.options if o.key == "Float"
+        )
+        assert float_option.disabled is False
+        assert controller._is_single_register_write() is False
+
+    def test_float_selected_falls_back_to_dec_in_fc06(self) -> None:
+        controller, _, page = _build_controller()
+        controls = controller.controls
+
+        controls.data_format_dropdown.value = "Float"
+        controls.function_dropdown.value = "6"
+        controls.function_dropdown.on_select()
+
+        assert controls.data_format_dropdown.value == "Dec"
+        # Switching into FC 06 with Float active must warn the user.
+        assert page.snack_bar is not None
+        assert "FC 10" in page.snack_bar.content.value
+
+    def test_no_float_snackbar_when_not_float_in_fc06(self) -> None:
+        controller, _, page = _build_controller()
+        controls = controller.controls
+
+        controls.data_format_dropdown.value = "Dec"
+        controls.function_dropdown.value = "6"
+        controls.function_dropdown.on_select()
+
+        assert page.snack_bar is None
+
+    def test_snackbar_when_per_address_float_in_grid_switched_to_fc06(self) -> None:
+        # Read holding registers with addr 0 set to Float and addr 1 to Bin
+        # (default format is Dec). The float is a per-address override, so the
+        # default-only check would miss it — switching to FC 06 must still warn.
+        from fmodmaster.config import Settings
+
+        settings = Settings()
+        settings.register_formats = {0: 3, 1: 2}  # 3 == Float, 2 == Bin
+        settings.register_float_endians = {0: 0}
+        controller, comm, page = _build_controller_with(FakeComm(), settings)
+        controls = controller.controls
+        comm.connected = True
+
+        # Start in Read Holding Registers (FC 03) and build the grid.
+        controls.function_dropdown.value = "3"
+        controls.function_dropdown.on_select()
+        controller._refresh_controls(rebuild_grid=True)
+
+        assert controls.data_format_dropdown.value != "Float"
+
+        controls.function_dropdown.value = "6"
+        controls.function_dropdown.on_select()
+
+        assert page.snack_bar is not None
+        assert "FC 10" in page.snack_bar.content.value
+
+    def test_context_menu_float_items_disabled_in_fc06(self) -> None:
+        controller, _, _ = _build_controller()
+        controls = controller.controls
+
+        controls.function_dropdown.value = "6"
+        controls.function_dropdown.on_select()
+
+        # Rebuild the grid so the context menu reflects the new function.
+        controller._refresh_controls(rebuild_grid=True)
+        table = controls.grid_host.content
+        from fmodmaster.registers import RegistersModel
+
+        assert isinstance(table, ft.DataTable)
+        model = table.data
+        assert isinstance(model, RegistersModel)
+
+        # Inspect the context menu built for the first used cell.
+        from fmodmaster.main_view import MainViewController
+
+        cell_control = table.rows[0].cells[0].content
+        # The cell is wrapped by _wrap_register_cell -> ContextMenu.
+        cm = cell_control
+        # Walk: Container(text) wrapped by ContextMenu.
+        if isinstance(cm, ft.Container):
+            cm = cm.content
+        assert isinstance(cm, ft.ContextMenu)
+        float_items = [i for i in cm.secondary_items if str(i.data).startswith("float:")]
+        assert float_items
+        assert all(i.disabled for i in float_items)
+
+    def test_write_rejected_when_float_override_in_fc06_range(self) -> None:
+        from fmodmaster.config import Settings
+
+        settings = Settings()
+        settings.register_formats = {0: 3}  # 3 == Base.Float
+        controller, comm, page = _build_controller_with(FakeComm(), settings)
+        controls = controller.controls
+        comm.connected = True
+
+        controls.function_dropdown.value = "6"
+        controls.function_dropdown.on_select()
+        controls.read_write_button.on_click()
+
+        assert page.snack_bar is not None
+        assert "FC 10" in page.snack_bar.content.value
+        # FC 06 must not have been issued.
+        assert comm.write_values == []
+
+    def test_write_allowed_with_float_override_in_fc10(self) -> None:
+        from fmodmaster.config import Settings
+
+        settings = Settings()
+        settings.register_formats = {0: 3}  # 3 == Base.Float
+        controller, comm, page = _build_controller_with(FakeComm(), settings)
+        controls = controller.controls
+        comm.connected = True
+
+        controls.function_dropdown.value = "16"
+        controls.function_dropdown.on_select()
+        controls.read_write_button.on_click()
+
+        # No rejection snackbar; transaction proceeds (write_values collected).
+        assert page.snack_bar is None or "FC 10" not in (
+            page.snack_bar.content.value if page.snack_bar else ""
+        )
+
+    def test_write_rejected_for_per_register_float_not_default(self) -> None:
+        # Default format is Dec, but the writable register (addr 0) is
+        # overridden to Float. The rejection must fire off that register's
+        # effective format, not the default dropdown value.
+        from fmodmaster.config import Settings
+
+        settings = Settings()
+        settings.register_formats = {0: 3}  # 3 == Base.Float, only reg 0
+        controller, comm, page = _build_controller_with(FakeComm(), settings)
+        controls = controller.controls
+        comm.connected = True
+
+        # Default format stays Dec; only reg 0 is float.
+        assert controls.data_format_dropdown.value != "Float"
+
+        controls.function_dropdown.value = "6"  # FC 06
+        controls.function_dropdown.on_select()
+        controls.read_write_button.on_click()
+
+        assert page.snack_bar is not None
+        assert "FC 10" in page.snack_bar.content.value
+        assert comm.write_values == []
 
 
 def test_scan_start_disables_transaction_controls_and_stop_restores() -> None:

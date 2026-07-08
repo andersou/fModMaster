@@ -44,13 +44,15 @@ from .registers import (
     validate_format_assignment,
 )
 from .tools_view import ToolsController, build_tools_dialog
+from .logging_helper import get_logger
+
+_logger = get_logger(__name__)
 
 
 class PageLike(Protocol):
     """Subset of :class:`flet.Page` used by the main view."""
 
     appbar: ft.AppBar | None
-    snack_bar: ft.SnackBar | None
     dialog: ft.AlertDialog | None
     overlay: list[Any]
 
@@ -67,7 +69,7 @@ class PageLike(Protocol):
 
     def update(self) -> None: ...
 
-    def show_dialog(self, dialog: ft.AlertDialog) -> None: ...
+    def show_dialog(self, dialog: ft.AlertDialog | ft.SnackBar) -> None: ...
 
     def pop_dialog(self) -> None: ...
 
@@ -670,6 +672,23 @@ class MainViewController:
         if spec.locks_quantity:
             qty = 1
         self.controls.qty_field.value = str(qty)
+        # FC 06 writes one 16-bit register, so a 32-bit Float (per-address
+        # override or legacy float mode) cannot be written. Warn when the
+        # current grid would write any float register. This catches registers
+        # read/set as float even when the default format dropdown is not Float.
+        if spec.code == FC_WRITE_SINGLE_REGISTER and (
+            self._grid_has_float() or self._data_base() is Base.Float
+        ):
+            _logger.warning(
+                "FC06 float block (function change): grid_has_float=%s, "
+                "default_base_is_float=%s",
+                self._grid_has_float(),
+                self._data_base() is Base.Float,
+            )
+            self._show_snackbar(
+                "Float requer Write Multiple Registers (FC 10) — "
+                "o registrador selecionado é float (32 bits)."
+            )
         self.schedule_refresh()
 
     def _on_format_change(self) -> None:
@@ -703,6 +722,17 @@ class MainViewController:
         if not self.comm.connected:
             return
         self._sync_comm_from_controls()
+        if self._is_single_register_write() and self._grid_has_float():
+            _logger.warning(
+                "FC06 float block (write click): grid_has_float=%s",
+                self._grid_has_float(),
+            )
+            self._show_snackbar(
+                "Float requer Write Multiple Registers (FC 10) — "
+                "o registrador selecionado é float (32 bits)."
+            )
+            self.schedule_refresh()
+            return
         if self._function_spec().is_write and not self._collect_write_values():
             self._show_snackbar("Invalid write value in table.")
             self.schedule_refresh()
@@ -1122,6 +1152,23 @@ class MainViewController:
         c.address_base_toggle.disabled = scanning
         c.data_format_dropdown.disabled = scanning
         c.signed_checkbox.disabled = scanning
+        # Write Single Register (FC 06) writes one 16-bit register, so a 32-bit
+        # Float is impossible there. Disable the Float option and, if it was
+        # selected, fall back to Dec to avoid a stuck/invalid state.
+        single_reg_write = self._is_single_register_write()
+        for option in c.data_format_dropdown.options:
+            if option.key == _FORMAT_FLOAT:
+                option.disabled = single_reg_write
+        if single_reg_write and c.data_format_dropdown.value == _FORMAT_FLOAT:
+            c.data_format_dropdown.value = _FORMAT_DEC
+        for option in c.data_format_dropdown.options:
+            if option.key == _FORMAT_FLOAT:
+                option.disabled = single_reg_write
+                option.tooltip = (
+                    "Float requer Write Multiple Registers (FC 10)."
+                    if single_reg_write
+                    else None
+                )
         c.qty_field.disabled = scanning or spec.locks_quantity
         c.qty_label.value = spec.quantity_label
         if spec.locks_quantity:
@@ -1205,6 +1252,12 @@ class MainViewController:
             item = event.item
             item_data = getattr(item, "data", None) if item is not None else None
             action = str(item_data or event.data or "")
+            # FC 06 writes a single 16-bit register; a 32-bit Float is invalid.
+            if self._is_single_register_write() and action.startswith("float:"):
+                self._show_snackbar(
+                    "Float requer Write Multiple Registers (FC 10)."
+                )
+                return
             match action:
                 case "base:bin":
                     self._apply_register_format(address, Base.Bin)
@@ -1223,30 +1276,59 @@ class MainViewController:
                 case "reset":
                     self._reset_register_format(address)
 
+        single_reg_write = self._is_single_register_write()
+        float_tooltip = (
+            "Float requer Write Multiple Registers (FC 10)."
+            if single_reg_write
+            else None
+        )
         return ft.ContextMenu(
             content=control,
             secondary_items=[
                 ft.PopupMenuItem(content="Dec", data="base:dec"),
                 ft.PopupMenuItem(content="Bin", data="base:bin"),
                 ft.PopupMenuItem(content="Hex", data="base:hex"),
-                ft.PopupMenuItem(content="Float ABCD", data="float:abcd"),
-                ft.PopupMenuItem(content="Float DCBA", data="float:dcba"),
-                ft.PopupMenuItem(content="Float BADC", data="float:badc"),
-                ft.PopupMenuItem(content="Float CDAB", data="float:cdab"),
+                ft.PopupMenuItem(
+                    content="Float ABCD",
+                    data="float:abcd",
+                    disabled=single_reg_write,
+                    tooltip=float_tooltip,
+                ),
+                ft.PopupMenuItem(
+                    content="Float DCBA",
+                    data="float:dcba",
+                    disabled=single_reg_write,
+                    tooltip=float_tooltip,
+                ),
+                ft.PopupMenuItem(
+                    content="Float BADC",
+                    data="float:badc",
+                    disabled=single_reg_write,
+                    tooltip=float_tooltip,
+                ),
+                ft.PopupMenuItem(
+                    content="Float CDAB",
+                    data="float:cdab",
+                    disabled=single_reg_write,
+                    tooltip=float_tooltip,
+                ),
                 ft.PopupMenuItem(content="Reset to default", data="reset"),
             ],
             on_select=on_select,
         )
 
     def _show_snackbar(self, message: str) -> None:
-        self.page.snack_bar = ft.SnackBar(ft.Text(message), open=True)
+        _logger.warning("SNACKBAR: %s", message)
+        # Flet 0.85.x has no page.snack_bar slot; a SnackBar is shown by
+        # passing it to page.show_dialog (SnackBar is a DialogControl).
+        self.page.show_dialog(ft.SnackBar(ft.Text(message)))
         self.schedule_refresh()
 
     def _show_connection_error(self, exc: ValueError) -> None:
         self.page.run_task(self._show_snackbar_async, str(exc))
 
     async def _show_snackbar_async(self, message: str) -> None:
-        self.page.snack_bar = ft.SnackBar(ft.Text(message), open=True)
+        self.page.show_dialog(ft.SnackBar(ft.Text(message)))
         self._refresh_controls(rebuild_grid=True)
         self.page.update()
 
@@ -1256,6 +1338,32 @@ class MainViewController:
     def _function_spec(self) -> FunctionSpec:
         code = _parse_int(self.controls.function_dropdown.value, FC_READ_COILS)
         return _SPECS_BY_CODE.get(code, _SPECS_BY_CODE[FC_READ_COILS])
+
+    def _is_single_register_write(self) -> bool:
+        """True when the active function is Write Single Register (FC 06).
+
+        FC 06 writes exactly one 16-bit register, so a 32-bit Float (which
+        needs two registers) is physically impossible. Float formatting is
+        blocked in that mode.
+        """
+        return self._function_spec().code == FC_WRITE_SINGLE_REGISTER
+
+    def _grid_has_float(self) -> bool:
+        """True when the built grid would write any register as a 32-bit Float.
+
+        Delegates to :meth:`RegistersModel.has_float_in_range`, which uses the
+        exact same per-address resolution as the actual write — so the check
+        cannot drift from what gets encoded. Catches a register read/set as
+        Float (per-address override or legacy float mode), not just the default
+        format dropdown.
+        """
+        table = self.controls.grid_host.content
+        if not isinstance(table, ft.DataTable):
+            return False
+        model = table.data
+        if not isinstance(model, RegistersModel):
+            return False
+        return model.has_float_in_range()
 
     def _data_base(self) -> Base:
         raw = self.controls.data_format_dropdown.value or _FORMAT_DEC

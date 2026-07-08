@@ -114,6 +114,47 @@ class TestEditing:
 
         assert isinstance(table.rows[0].cells[0].content, ft.TextField)
 
+    def test_unset_register_is_blank_placeholder_not_invalid(self) -> None:
+        # A register with no read value ("-"/"-/-" in read mode) must render as
+        # a blank, non-red placeholder when switched to write mode.
+        table = build_grid(
+            start_addr=0, qty=1, base=Base.Dec, signed=False, is_write=True,
+            values=[None], valid=False,
+        )
+        field = _field_cell(table.rows[0].cells[0])
+
+        # value is the read marker, not a blank field -> must become empty.
+        assert field.value == ""
+        # Neutral placeholder: no error, normal text color.
+        assert field.error is None
+        assert field.color == ft.Colors.ON_SURFACE
+
+    def test_blur_on_empty_placeholder_stays_neutral(self) -> None:
+        # Blurring a blank field must not flag it red (only real bad input does).
+        table = build_grid(
+            start_addr=0, qty=1, base=Base.Dec, signed=False, is_write=True,
+            values=[None], valid=False,
+        )
+        model = _table_model(table)
+        field = _field_cell(table.rows[0].cells[0])
+
+        # Blurring a blank field triggers the field's own validator closure.
+        field.value = ""
+        field.on_blur()
+        assert field.error is None
+        assert field.color == ft.Colors.ON_SURFACE
+
+    def test_nonempty_invalid_entry_still_red(self) -> None:
+        # A real unparseable value must still be flagged invalid.
+        table = build_grid(start_addr=0, qty=1, base=Base.Dec, signed=False, is_write=True)
+        model = _table_model(table)
+        field = _field_cell(table.rows[0].cells[0])
+
+        field.value = "zzz"
+        field.on_change()
+        assert field.error == "Invalid value"
+        assert field.color == ft.Colors.ERROR
+
     def test_coil_cell_rejects_two(self) -> None:
         table = build_grid(start_addr=0, qty=1, base=Base.Bin, signed=False, is_write=True, is_16bit=False)
         model = _table_model(table)
@@ -551,6 +592,35 @@ class TestFormatMapModel:
         assert _text_cell(table.rows[0].cells[0]).value == "1"
         assert _text_cell(table.rows[0].cells[1]).value == "—"
         assert _text_cell(table.rows[0].cells[2]).value == "42"
+
+
+class TestHasFloatInRange:
+    """The write-guard must ask the model's effective per-register format, not
+    just the default dropdown value."""
+
+    def test_per_address_float_detected_not_default(self) -> None:
+        # Default Dec, reg 2 overridden to Float → must report float.
+        model = RegistersModel(
+            0, 4, base=Base.Dec, is_write=True, default_base=Base.Dec,
+            format_map={2: Base.Float},
+        )
+        assert model.has_float_in_range() is True
+
+    def test_default_dec_without_override_reports_no_float(self) -> None:
+        model = RegistersModel(0, 4, base=Base.Dec, is_write=True)
+        assert model.has_float_in_range() is False
+
+    def test_legacy_float_mode_reports_float(self) -> None:
+        model = RegistersModel(0, 4, base=Base.Float, is_write=True)
+        assert model.has_float_in_range() is True
+
+    def test_float_outside_range_not_detected(self) -> None:
+        # Float override sits at addr 5, but grid only covers 0..3.
+        model = RegistersModel(
+            0, 4, base=Base.Dec, is_write=True, default_base=Base.Dec,
+            format_map={5: Base.Float},
+        )
+        assert model.has_float_in_range() is False
 
 
 class TestFormatOverrideVisual:
