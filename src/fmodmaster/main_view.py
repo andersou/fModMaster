@@ -444,7 +444,7 @@ class MainViewController:
                 self._submenu("Options", ["Modbus RTU", "Modbus TCP", "Settings"]),
                 self._submenu("View", ["Log File", "Bus Monitor"]),
                 self._submenu("Commands", ["Connect", "Read / Write", "Scan", "Clear Table", "Reset Counters", "Tools"]),
-                self._submenu("Help", ["Modbus Manual", "About"]),
+                self._submenu("Help", ["About"]),
             ]
         )
 
@@ -458,8 +458,6 @@ class MainViewController:
         c = self.controls
         return ft.Row(
             controls=[
-                c.load_session_button,
-                c.save_session_button,
                 c.connect_button,
                 c.read_write_button,
                 c.scan_button,
@@ -467,9 +465,7 @@ class MainViewController:
                 c.reset_counters_button,
                 c.log_file_button,
                 c.bus_monitor_button,
-                c.tools_button,
                 c.settings_button,
-                c.about_button,
                 c.exit_button,
             ],
             wrap=True,

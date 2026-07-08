@@ -17,9 +17,9 @@ BaseValue = Base | int
 
 _GRID_WIDTH: Final = 10
 _COLUMN_LABELS: Final = tuple(f"{col:02d}" for col in range(_GRID_WIDTH))
-_TEXT_RED: Final = ft.Colors.RED
-_TEXT_BLACK: Final = ft.Colors.BLACK
-_OUT_OF_RANGE_BG: Final = ft.Colors.GREY_200
+_COLOR_TEXT: Final = ft.Colors.ON_SURFACE
+_COLOR_ERROR: Final = ft.Colors.ERROR
+_COLOR_OUT_OF_RANGE_BG: Final = ft.Colors.SURFACE_CONTAINER_HIGHEST
 _INLINE_ERROR: Final = "Invalid value"
 
 
@@ -162,7 +162,7 @@ class RegistersModel:
             field = self._build_text_field(cell)
             self.editable_fields[cell.address] = field
             return ft.DataCell(field, tooltip=cell.tooltip)
-        text = ft.Text(cell.visible_text, color=_TEXT_BLACK if cell.is_used and cell.is_valid else _TEXT_RED, bgcolor=_OUT_OF_RANGE_BG if not cell.is_used else None)
+        text = ft.Text(cell.visible_text, color=_COLOR_TEXT if cell.is_used and cell.is_valid else _COLOR_ERROR, bgcolor=_COLOR_OUT_OF_RANGE_BG if not cell.is_used else None)
         return ft.DataCell(text, tooltip=cell.tooltip or None)
 
     def _build_text_field(self, cell: RegisterCell) -> ft.TextField:
@@ -278,8 +278,8 @@ def _unused_cell(address: int) -> RegisterCell:
 
 def _mark_text_field(field: ft.TextField, *, is_valid: bool) -> None:
     field.error = None if is_valid else _INLINE_ERROR
-    field.color = _TEXT_BLACK if is_valid else _TEXT_RED
-    field.border_color = None if is_valid else _TEXT_RED
+    field.color = _COLOR_TEXT if is_valid else _COLOR_ERROR
+    field.border_color = None if is_valid else _COLOR_ERROR
 
 
 def _is_decimal_text(text: str) -> bool:
