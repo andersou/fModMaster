@@ -553,6 +553,100 @@ class TestFormatMapModel:
         assert _text_cell(table.rows[0].cells[2]).value == "42"
 
 
+class TestFormatOverrideVisual:
+    """Cells whose per-address format differs from the default must be visibly
+    outlined so the user can tell an override is active."""
+
+    def test_overridden_cell_gets_outline_border(self) -> None:
+        # Grid default Dec; reg 2 overridden to Hex → outline border expected.
+        table = build_grid(
+            start_addr=0, qty=4, base=Base.Dec, signed=False, is_write=False,
+            values=[1, 2, 5, 255], default_base=Base.Dec,
+            format_map={2: Base.Hex},
+        )
+        # Non-overridden cells: no override border.
+        assert _container_cell(table.rows[0].cells[0]).border is None
+        # Overridden cell (reg 2) carries the override border.
+        assert _container_cell(table.rows[0].cells[2]).border is not None
+
+    def test_matching_default_format_has_no_outline(self) -> None:
+        # Reg 2 set explicitly to Dec (the default) → not an override → no border.
+        table = build_grid(
+            start_addr=0, qty=4, base=Base.Dec, signed=False, is_write=False,
+            values=[1, 2, 5, 255], default_base=Base.Dec,
+            format_map={2: Base.Dec},
+        )
+        assert _container_cell(table.rows[0].cells[2]).border is None
+
+    def test_float_continuation_inherits_override_outline(self) -> None:
+        # Reg 0 → Float overrides default Dec; reg 1 is its continuation and
+        # should also be outlined (it belongs to the override).
+        table = build_grid(
+            start_addr=0, qty=2, base=Base.Dec, signed=False, is_write=False,
+            values=[16256, 0], default_base=Base.Dec,
+            format_map={0: Base.Float},
+        )
+        assert _container_cell(table.rows[0].cells[0]).border is not None
+        assert _container_cell(table.rows[0].cells[1]).border is not None
+
+    def test_overridden_write_cell_gets_border_color(self) -> None:
+        # Editable override cells use border_color instead of a Container border.
+        table = build_grid(
+            start_addr=0, qty=2, base=Base.Dec, signed=False, is_write=True,
+            values=[0, 0], default_base=Base.Dec,
+            format_map={0: Base.Hex},
+        )
+        assert _field_cell(table.rows[0].cells[0]).border_color is not None
+        assert _field_cell(table.rows[0].cells[1]).border_color is None
+
+    def test_no_outline_in_legacy_single_base_mode(self) -> None:
+        # Without a format_map, nothing is ever considered overridden.
+        table = build_grid(
+            start_addr=0, qty=2, base=Base.Hex, signed=False, is_write=False,
+            values=[1, 255],
+        )
+        assert _container_cell(table.rows[0].cells[0]).border is None
+        assert _container_cell(table.rows[0].cells[1]).border is None
+
+
+class TestWriteRespectsFormat:
+    """Lock in that the write path honours the exact same per-address format
+    and endian used for display (request: 'selected format respected on write')."""
+
+    def test_write_uses_per_address_format_not_default(self) -> None:
+        # Default Dec, but reg 0 overridden to Hex. Writing "ff" must encode as
+        # 255 (hex), not a decimal parse of "ff" (which would be rejected).
+        table = build_grid(
+            start_addr=0, qty=2, base=Base.Dec, signed=False, is_write=True,
+            values=[0, 0], default_base=Base.Dec, format_map={0: Base.Hex},
+        )
+        model = _table_model(table)
+        _field_cell(table.rows[0].cells[0]).value = "ff"
+        assert model.collect_write_values() == [255, 0]
+
+    def test_write_bin_override_uses_binary_parsing(self) -> None:
+        table = build_grid(
+            start_addr=0, qty=1, base=Base.Dec, signed=False, is_write=True,
+            values=[0], default_base=Base.Dec, format_map={0: Base.Bin},
+        )
+        model = _table_model(table)
+        _field_cell(table.rows[0].cells[0]).value = "1010"
+        assert model.collect_write_values() == [10]
+
+    def test_write_float_override_uses_per_address_endian(self) -> None:
+        # Reg 0 → Float CDAB while default endian used elsewhere is ABCD. The
+        # write must encode with CDAB ([0x0000, 0x3F80]), proving the per-address
+        # endian (not the global one) drives the write.
+        table = build_grid(
+            start_addr=0, qty=2, base=Base.Dec, signed=False, is_write=True,
+            values=[0, 0], default_base=Base.Dec,
+            format_map={0: Base.Float}, float_endian_map={0: FloatEndian.CDAB},
+        )
+        model = _table_model(table)
+        _field_cell(table.rows[0].cells[0]).value = "1.0"
+        assert model.collect_write_values() == [0x0000, 0x3F80]
+
+
 class TestFloatOwnerFor:
     def test_returns_owner_when_previous_address_is_float(self) -> None:
         assert float_owner_for(1, {0: Base.Float}) == 0

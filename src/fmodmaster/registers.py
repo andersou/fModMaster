@@ -44,6 +44,8 @@ _COLUMN_LABELS: Final = tuple(f"{col:02d}" for col in range(_GRID_WIDTH))
 _COLOR_TEXT: Final = ft.Colors.ON_SURFACE
 _COLOR_ERROR: Final = ft.Colors.ERROR
 _COLOR_OUT_OF_RANGE_BG: Final = ft.Colors.SURFACE_CONTAINER_HIGHEST
+_COLOR_OVERRIDE_BORDER: Final = ft.Colors.PRIMARY
+_OVERRIDE_BORDER: Final = ft.Border(ft.BorderSide(2, _COLOR_OVERRIDE_BORDER))
 _INLINE_ERROR: Final = "Invalid value"
 
 
@@ -203,8 +205,7 @@ class RegistersModel:
             addr: _normalize_base(v) for addr, v in (format_map or {}).items()
         }
         self.float_endian_map: dict[int, FloatEndian] = {
-            addr: _coerce_endian(v)
-            for addr, v in (float_endian_map or {}).items()
+            addr: _coerce_endian(v) for addr, v in (float_endian_map or {}).items()
         }
         self._cell_wrapper = cell_wrapper
         self._per_address_mode = bool(self.format_map)
@@ -252,7 +253,10 @@ class RegistersModel:
         """True if ``address`` is the N+1 continuation of a float at N."""
         if value_index % 2 == 1 and self._is_float_at(address - 1, value_index - 1):
             return True
-        if self._per_address_mode and float_owner_for(address, self.format_map) is not None:
+        if (
+            self._per_address_mode
+            and float_owner_for(address, self.format_map) is not None
+        ):
             return True
         return False
 
@@ -382,7 +386,9 @@ class RegistersModel:
             rows.append(row)
         return rows
 
-    def _used_cell(self, address: int, value_index: int, *, valid: bool) -> RegisterCell:
+    def _used_cell(
+        self, address: int, value_index: int, *, valid: bool
+    ) -> RegisterCell:
         cell = self._used_cell_core(address, value_index, valid=valid)
         if not self._per_address_mode:
             if not self.is_float_mode:
@@ -454,11 +460,7 @@ class RegistersModel:
             else None
         )
         # If this is the last register of an odd-length qty, show integer fallback.
-        if (
-            next_value is None
-            and self.qty % 2 == 1
-            and value_index == self.qty - 1
-        ):
+        if next_value is None and self.qty % 2 == 1 and value_index == self.qty - 1:
             return cell
         if not valid:
             return RegisterCell(
@@ -570,9 +572,12 @@ class RegistersModel:
         content = ft.Container(
             text,
             width=75,
-            height=36,
+            height=42,
             alignment=ft.Alignment.CENTER_LEFT,
             bgcolor=_COLOR_OUT_OF_RANGE_BG if not cell.is_used else None,
+            border=_OVERRIDE_BORDER
+            if self._is_format_overridden(cell.address)
+            else None,
         )
         return ft.DataCell(
             self._wrap_cell_content(cell, content),
@@ -583,6 +588,18 @@ class RegistersModel:
         if not cell.is_used or self._cell_wrapper is None:
             return control
         return self._cell_wrapper(cell.address, control)
+
+    def _is_format_overridden(self, address: int) -> bool:
+        """True when ``address`` carries a per-address format different from the
+        default, or is the continuation register consumed by such a float
+        (i.e. the user changed the format for this cell)."""
+        if not self._per_address_mode:
+            return False
+        explicit = self.format_map.get(address)
+        if explicit is not None:
+            return explicit is not self.default_base
+        # Continuation register of a float override (N+1 of a float at N).
+        return float_owner_for(address, self.format_map) is not None
 
     def _build_text_field(self, cell: RegisterCell) -> ft.TextField:
         field = ft.TextField(
@@ -610,7 +627,8 @@ class RegistersModel:
                 else:
                     _mark_text_field(
                         field,
-                        is_valid=self._parse_edit_value_for(field.value, addr) is not None,
+                        is_valid=self._parse_edit_value_for(field.value, addr)
+                        is not None,
                     )
         elif self.is_float_mode:
 
@@ -628,6 +646,11 @@ class RegistersModel:
         field.on_change = validate_field
         field.on_blur = validate_field
         _mark_text_field(field, is_valid=cell.is_valid)
+        # Outline override cells so a per-address format change is visible even
+        # in edit mode. Applied after _mark_text_field, which would otherwise
+        # reset border_color. Error state (invalid input) takes precedence.
+        if self._is_format_overridden(cell.address) and cell.is_valid:
+            field.border_color = _COLOR_OVERRIDE_BORDER
         return field
 
     def _max_length(self) -> int | None:
@@ -740,6 +763,7 @@ class RegistersModel:
         if math.isfinite(val) and -3.4e38 <= val <= 3.4e38:
             return val
         return None
+
 
 _HEX_DIGITS: Final = frozenset("0123456789abcdefABCDEF")
 
