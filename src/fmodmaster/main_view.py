@@ -829,16 +829,20 @@ class MainViewController:
 
     async def _load_session_async(self) -> None:
         picker = _file_picker_for_page(self.page)
-        files = await picker.pick_files(
-            dialog_title="Load Session",
-            file_type=ft.FilePickerFileType.CUSTOM,
-            allowed_extensions=["ses"],
-            allow_multiple=False,
-        )
-        if files:
-            path = files[0].path
-            if path:
-                self._load_session_from_path(path)
+        try:
+            files = await picker.pick_files(
+                dialog_title="Load Session",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["fmmsess"],
+                allow_multiple=False,
+            )
+            if files:
+                path = files[0].path
+                if path:
+                    self._load_session_from_path(path)
+        finally:
+            if picker in self.page.overlay:
+                self.page.overlay.remove(picker)
 
     def _load_session_from_path(self, path: str) -> None:
         self.settings.load_session(path)
@@ -851,14 +855,18 @@ class MainViewController:
 
     async def _save_session_async(self) -> None:
         picker = _file_picker_for_page(self.page)
-        path = await picker.save_file(
-            dialog_title="Save Session",
-            file_name="session.ses",
-            file_type=ft.FilePickerFileType.CUSTOM,
-            allowed_extensions=["ses"],
-        )
-        if path is not None:
-            self._save_session_to_path(path)
+        try:
+            path = await picker.save_file(
+                dialog_title="Save Session",
+                file_name="session",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["fmmsess"],
+            )
+            if path is not None:
+                self._save_session_to_path(path)
+        finally:
+            if picker in self.page.overlay:
+                self.page.overlay.remove(picker)
 
     def _save_session_to_path(self, path: str) -> None:
         self._sync_settings_from_controls()
