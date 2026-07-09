@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import flet as ft
+import pytest
 import serial.tools.list_ports  # type: ignore[import-untyped]
 
 from fmodmaster.config import Settings
@@ -22,6 +23,7 @@ class FakePage:
         self.appbar: ft.AppBar | None = None
         self.snack_bar: ft.SnackBar | None = None
         self.dialog: ft.AlertDialog | None = None
+        self.services: list[Any] = []
         self.show_dialog_count = 0
         self.pop_dialog_count = 0
         self.update_count = 0
@@ -61,6 +63,27 @@ class FakePage:
 
     def launch_url(self, url: str) -> None:
         self.launched_url = url
+
+
+class FakeFilePicker:
+    configured_next_files: list[list[Any] | None] = []
+    configured_next_path: str | None = None
+
+    def __init__(self) -> None:
+        self.pick_files_calls: list[dict[str, Any]] = []
+        self.save_file_calls: list[dict[str, Any]] = []
+        self.next_files = list(type(self).configured_next_files)
+        self.next_path = type(self).configured_next_path
+
+    async def pick_files(self, **kwargs: Any) -> list[Any] | None:
+        self.pick_files_calls.append(kwargs)
+        if self.next_files:
+            return self.next_files.pop(0)
+        return None
+
+    async def save_file(self, **kwargs: Any) -> str | None:
+        self.save_file_calls.append(kwargs)
+        return self.next_path
 
 
 class FakeComm:
@@ -173,6 +196,78 @@ def test_build_starts_disconnected_with_transactions_disabled() -> None:
     assert controls.scan_button.disabled is True
     assert controls.mode_dropdown.disabled is False
     assert controls.scan_rate_field.disabled is False
+
+
+def test_file_picker_helper_reuses_existing_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FakePage()
+    picker = FakeFilePicker()
+    monkeypatch.setattr(main_view.ft, "FilePicker", FakeFilePicker)
+    page.services.append(picker)
+
+    result = main_view._file_picker_for_page(page)
+
+    assert result is picker
+    assert page.services == [picker]
+
+
+def test_load_session_keeps_file_picker_registered(monkeypatch: pytest.MonkeyPatch) -> None:
+    page = FakePage()
+    FakeFilePicker.configured_next_files = [[type("File", (), {"path": "/tmp/session.fmmsess"})()]]
+    FakeFilePicker.configured_next_path = None
+    monkeypatch.setattr(main_view.ft, "FilePicker", FakeFilePicker)
+    controller = main_view.MainViewController(page, Settings(), FakeComm())
+    load_called = []
+
+    def load_session_from_path(path: str) -> None:
+        load_called.append(path)
+
+    monkeypatch.setattr(controller, "_load_session_from_path", load_session_from_path)
+
+    page.run_task(controller._load_session_async)
+
+    picker = page.services[0]
+    assert load_called == ["/tmp/session.fmmsess"]
+    assert len(page.services) == 1
+    assert isinstance(page.services[0], FakeFilePicker)
+    assert picker.pick_files_calls == [
+        {
+            "dialog_title": "Load Session",
+            "file_type": ft.FilePickerFileType.CUSTOM,
+            "allowed_extensions": ["fmmsess"],
+            "allow_multiple": False,
+        }
+    ]
+
+
+def test_save_session_keeps_file_picker_registered(monkeypatch: pytest.MonkeyPatch) -> None:
+    page = FakePage()
+    FakeFilePicker.configured_next_files = []
+    FakeFilePicker.configured_next_path = "/tmp/session.fmmsess"
+    monkeypatch.setattr(main_view.ft, "FilePicker", FakeFilePicker)
+    controller = main_view.MainViewController(page, Settings(), FakeComm())
+    save_called = []
+
+    def save_session_to_path(path: str) -> None:
+        save_called.append(path)
+
+    monkeypatch.setattr(controller, "_save_session_to_path", save_session_to_path)
+
+    page.run_task(controller._save_session_async)
+
+    picker = page.services[0]
+    assert save_called == ["/tmp/session.fmmsess"]
+    assert len(page.services) == 1
+    assert isinstance(page.services[0], FakeFilePicker)
+    assert picker.save_file_calls == [
+        {
+            "dialog_title": "Save Session",
+            "file_name": "session",
+            "file_type": ft.FilePickerFileType.CUSTOM,
+            "allowed_extensions": ["fmmsess"],
+        }
+    ]
 
 
 def test_status_bar_is_fixed_below_expanding_content() -> None:
@@ -556,6 +651,9 @@ def test_menu_about_opens_dialog_with_current_flet_api() -> None:
     assert page.dialog is not None
     assert page.dialog.open is True
     assert page.dialog.title == "About fModMaster"
+    assert isinstance(page.dialog.content, ft.Markdown)
+    assert "Responsible: Anderson Souza" in page.dialog.content.value
+    assert "https://github.com/andersou/fModMaster" in page.dialog.content.value
 
 
 class FakePort:
@@ -635,12 +733,51 @@ def test_file_menu_contains_new_session() -> None:
     assert isinstance(view, ft.Column)
     main_content = view.controls[0]
     assert isinstance(main_content, ft.Column)
-    menu_bar = main_content.controls[0]
-    assert isinstance(menu_bar, ft.MenuBar)
-    file_menu = menu_bar.controls[0]
-    assert isinstance(file_menu, ft.SubmenuButton)
+    menu_host = main_content.controls[0]
+    assert isinstance(menu_host, ft.Container)
+    assert menu_host.bgcolor == ft.Colors.SURFACE_CONTAINER
+    menu_row = menu_host.content
+    assert isinstance(menu_row, ft.Row)
+    assert menu_row.spacing == 0
+    assert menu_row.vertical_alignment == ft.CrossAxisAlignment.CENTER
+    app_title, left_menu_bar, right_menu_bar = menu_row.controls
+    assert isinstance(app_title, ft.Container)
+    assert app_title.bgcolor == ft.Colors.SECONDARY
+    assert app_title.height == 42
+    assert isinstance(app_title.content, ft.Text)
+    assert app_title.content.value == "fModMaster"
+    assert app_title.content.color == ft.Colors.ON_SECONDARY
+    assert isinstance(left_menu_bar, ft.MenuBar)
+    assert isinstance(right_menu_bar, ft.MenuBar)
+    assert left_menu_bar.expand is True
 
-    assert [button.content for button in file_menu.controls] == [
+    help_menu = right_menu_bar.controls[0]
+    assert isinstance(help_menu, ft.SubmenuButton)
+    assert help_menu.style is not None
+    assert help_menu.style.alignment == ft.Alignment.CENTER
+    assert isinstance(help_menu.content, ft.Text)
+    assert help_menu.content.value == "Help"
+    assert help_menu.content.text_align == ft.TextAlign.CENTER
+    about = help_menu.controls[0]
+    assert isinstance(about, ft.MenuItemButton)
+    assert isinstance(about.content, ft.Text)
+    assert about.content.value == "About"
+
+    file_menu = left_menu_bar.controls[0]
+    assert isinstance(file_menu, ft.SubmenuButton)
+    assert file_menu.style is not None
+    assert file_menu.style.alignment == ft.Alignment.CENTER
+    assert isinstance(file_menu.content, ft.Text)
+    assert file_menu.content.value == "File"
+    assert file_menu.content.text_align == ft.TextAlign.CENTER
+
+    file_menu_items: list[str] = []
+    for item in file_menu.controls:
+        assert isinstance(item, ft.MenuItemButton)
+        assert isinstance(item.content, ft.Text)
+        file_menu_items.append(item.content.value)
+
+    assert file_menu_items == [
         "New Session",
         "Load Session",
         "Save Session",

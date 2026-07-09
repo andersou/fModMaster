@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any
 
 import flet as ft
+import pytest
 
+import fmodmaster.bus_monitor as bus_monitor
 from fmodmaster.bus_monitor import (
     BusMonitorController,
     BusMonitorModel,
@@ -19,7 +21,7 @@ from fmodmaster.config import Settings
 class FakePage:
     def __init__(self) -> None:
         self.dialog: ft.AlertDialog | None = None
-        self.overlay: list[ft.Control] = []
+        self.services: list[Any] = []
         self.show_dialog_count = 0
         self.pop_dialog_count = 0
         self.update_count = 0
@@ -56,6 +58,18 @@ class FakeComm:
         self.on_raw: Callable[[str, bytes], None] | None = None
 
 
+class FakeFilePicker:
+    configured_next_path: str | None = None
+
+    def __init__(self) -> None:
+        self.save_file_calls: list[dict[str, Any]] = []
+        self.next_path = type(self).configured_next_path
+
+    async def save_file(self, *args: Any, **kwargs: Any) -> str | None:
+        self.save_file_calls.append({"args": args, "kwargs": kwargs})
+        return self.next_path
+
+
 def _settings(max_lines: int = 60) -> Settings:
     settings = Settings()
     settings.max_no_of_lines = str(max_lines)
@@ -76,6 +90,20 @@ def test_parse_rtu_tx_read_request_fields() -> None:
     assert parsed.start_addr == 0x0100
     assert parsed.quantity == 2
     assert parsed.crc == 0x0571
+
+
+def test_file_picker_helper_reuses_existing_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = FakePage()
+    picker = FakeFilePicker()
+    monkeypatch.setattr(bus_monitor.ft, "FilePicker", FakeFilePicker)
+    page.services.append(picker)
+
+    result = bus_monitor._file_picker_for_page(page)
+
+    assert result is picker
+    assert page.services == [picker]
 
 
 def test_parse_tcp_tx_read_request_fields() -> None:
@@ -163,6 +191,39 @@ def test_save_writes_raw_lines_to_file(tmp_path: Path) -> None:
 
     assert destination.read_text(encoding="utf-8").startswith("Tx ")
     assert "0103010000027105" in destination.read_text(encoding="utf-8")
+
+
+def test_save_clicked_keeps_file_picker_registered(monkeypatch: pytest.MonkeyPatch) -> None:
+    page = FakePage()
+    comm = FakeComm()
+    controller = BusMonitorController(page, comm, _settings())
+    FakeFilePicker.configured_next_path = "/tmp/bus-monitor.txt"
+    monkeypatch.setattr(bus_monitor.ft, "FilePicker", FakeFilePicker)
+    save_called: list[str] = []
+
+    def save_to_path(path: str) -> None:
+        save_called.append(path)
+
+    monkeypatch.setattr(controller, "save_to_path", save_to_path)
+
+    page.run_task(controller._save_clicked_async)
+
+    picker = page.services[0]
+    assert save_called == ["/tmp/bus-monitor.txt"]
+    assert len(page.services) == 1
+    assert isinstance(page.services[0], FakeFilePicker)
+    assert picker.save_file_calls == [
+        {
+            "args": (
+                "Save Bus Monitor Raw Data",
+                "bus-monitor.txt",
+            ),
+            "kwargs": {
+                "file_type": ft.FilePickerFileType.CUSTOM,
+                "allowed_extensions": ["txt"],
+            },
+        }
+    ]
 
 
 def test_clear_empties_model_and_list_view() -> None:

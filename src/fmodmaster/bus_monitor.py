@@ -23,16 +23,17 @@ _EMPTY_DETAIL: Final = "Select a raw line to decode ADU/PDU fields."
 
 
 def _file_picker_for_page(page: PageLike) -> ft.FilePicker:
+    for service in page.services:
+        if isinstance(service, ft.FilePicker):
+            return service
     picker = ft.FilePicker()
-    overlay = page.overlay
-    if picker not in overlay:
-        overlay.append(picker)
+    page.services.append(picker)
     return picker
 
 
 class PageLike(Protocol):
     dialog: ft.AlertDialog | None
-    overlay: list[Any]
+    services: list[Any]
 
     def run_task(
         self,
@@ -291,18 +292,14 @@ class BusMonitorController:
 
     async def _save_clicked_async(self) -> None:
         picker = _file_picker_for_page(self.page)
-        try:
-            path = await picker.save_file(
-                "Save Bus Monitor Raw Data",
-                "bus-monitor.txt",
-                file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["txt"],
-            )
-            if path is not None:
-                self.save_to_path(path)
-        finally:
-            if picker in self.page.overlay:
-                self.page.overlay.remove(picker)
+        path = await picker.save_file(
+            "Save Bus Monitor Raw Data",
+            "bus-monitor.txt",
+            file_type=ft.FilePickerFileType.CUSTOM,
+            allowed_extensions=["txt"],
+        )
+        if path is not None:
+            self.save_to_path(path)
 
 
 def build_bus_monitor_dialog(

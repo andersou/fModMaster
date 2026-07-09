@@ -78,7 +78,7 @@ class PageLike(Protocol):
 
     appbar: ft.AppBar | None
     dialog: ft.AlertDialog | None
-    overlay: list[Any]
+    services: list[Any]
 
     def run_thread(
         self, handler: Callable[..., Any], *args: Any, **kwargs: Any
@@ -424,7 +424,9 @@ class MainViewController:
         # Only surface logs from the modbus_comm module as snackbars.  Manual
         # snackbars (via _show_snackbar) remain the path for user-facing
         # messages from main_view itself, keeping them clean and friendly.
-        logging.getLogger("fmodmaster.modbus_comm").addHandler(self._snackbar_log_handler)
+        logging.getLogger("fmodmaster.modbus_comm").addHandler(
+            self._snackbar_log_handler
+        )
 
     def schedule_refresh(self) -> None:
         self.page.run_task(self._refresh_async)
@@ -509,7 +511,6 @@ class MainViewController:
         )
 
     def _build_layout(self) -> ft.Control:
-        self.page.appbar = ft.AppBar(title="fModMaster")
         main_content = ft.Column(
             controls=[
                 self._build_menu_bar(),
@@ -530,32 +531,69 @@ class MainViewController:
         content.data = self
         return content
 
-    def _build_menu_bar(self) -> ft.MenuBar:
-        return ft.MenuBar(
-            controls=[
-                self._submenu("File", ["New Session", "Load Session", "Save Session"]),
-                self._submenu("Options", ["Modbus RTU", "Modbus TCP", "Settings"]),
-                self._submenu("View", ["Log File", "Bus Monitor"]),
-                self._submenu(
-                    "Commands",
-                    [
-                        "Connect",
-                        "Read / Write",
-                        "Scan",
-                        "Clear Table",
-                        "Reset Counters",
-                        "Tools",
-                    ],
-                ),
-                self._submenu("Help", ["About"]),
-            ]
+    def _build_menu_bar(self) -> ft.Container:
+        left_menus: list[ft.Control] = [
+            self._submenu("File", ["New Session", "Load Session", "Save Session"]),
+            self._submenu("Options", ["Modbus RTU", "Modbus TCP", "Settings"]),
+            self._submenu("View", ["Log File", "Bus Monitor"]),
+            self._submenu(
+                "Commands",
+                [
+                    "Connect",
+                    "Read / Write",
+                    "Scan",
+                    "Clear Table",
+                    "Reset Counters",
+                    "Tools",
+                ],
+            ),
+        ]
+        menu_style = ft.MenuStyle(
+            alignment=ft.Alignment.TOP_LEFT,
+            bgcolor=ft.Colors.TRANSPARENT,
+            elevation=0,
+        )
+        return ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Container(
+                        content=ft.Text(
+                            "fModMaster",
+                            color=ft.Colors.ON_SECONDARY,
+                            weight=ft.FontWeight.W_600,
+                        ),
+                        bgcolor=ft.Colors.SECONDARY,
+                        height=42,
+                        padding=ft.Padding.symmetric(horizontal=12),
+                        alignment=ft.Alignment.CENTER_LEFT,
+                    ),
+                    ft.MenuBar(
+                        expand=True,
+                        style=menu_style,
+                        controls=left_menus,
+                    ),
+                    ft.MenuBar(
+                        style=menu_style,
+                        controls=[self._submenu("Help", ["About"])],
+                    ),
+                ],
+                spacing=0,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            bgcolor=ft.Colors.SURFACE_CONTAINER,
+            border_radius=6,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
 
     def _submenu(self, label: str, item_labels: Sequence[str]) -> ft.SubmenuButton:
         return ft.SubmenuButton(
-            content=label,
+            content=ft.Text(label, text_align=ft.TextAlign.CENTER),
+            style=ft.ButtonStyle(alignment=ft.Alignment.CENTER),
             controls=[
-                ft.TextButton(text, on_click=self._menu_handler(text))
+                ft.MenuItemButton(
+                    content=ft.Text(text),
+                    on_click=self._menu_handler(text),
+                )
                 for text in item_labels
             ],
         )
@@ -736,7 +774,9 @@ class MainViewController:
         # Before switching, snapshot the state of the *outgoing* function.
         # The dropdown value has already changed when on_select fires, so
         # read the saved code rather than _function_spec().
-        prev_code = getattr(self, "_last_fn_code", _normalize_function_code(self.settings.function_code))
+        prev_code = getattr(
+            self, "_last_fn_code", _normalize_function_code(self.settings.function_code)
+        )
         self._snapshot_current_fn_state(prev_code)
         spec = self._function_spec()
         self._last_fn_code = spec.code
@@ -752,9 +792,7 @@ class MainViewController:
         # Single-register / single-coil writes have intrinsic limits that the
         # session may not respect — warn the user when switching in.
         if spec.code == FC_WRITE_SINGLE_COIL:
-            self._show_snackbar(
-                "Write Single Coil suporta apenas 1 bobina por vez."
-            )
+            self._show_snackbar("Write Single Coil suporta apenas 1 bobina por vez.")
         elif spec.code == FC_WRITE_SINGLE_REGISTER and (
             self._grid_has_float() or self._data_base() is Base.Float
         ):
@@ -991,9 +1029,11 @@ class MainViewController:
         dialog = ft.AlertDialog(
             modal=True,
             title="About fModMaster",
-            content=ft.Text(
+            content=ft.Markdown(
                 "fModMaster 0.1.0\n"
                 "A Flet recreation of qModMaster.\n"
+                "Responsible: Anderson Souza\n"
+                "GitHub: [andersou/fModMaster](https://github.com/andersou/fModMaster)\n"
                 "Credits: qModMaster/libmodbus/QsLog project references."
             ),
             actions=[ft.TextButton("OK", on_click=self._close_dialog)],
@@ -1042,20 +1082,16 @@ class MainViewController:
 
     async def _load_session_async(self) -> None:
         picker = _file_picker_for_page(self.page)
-        try:
-            files = await picker.pick_files(
-                dialog_title="Load Session",
-                file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["fmmsess"],
-                allow_multiple=False,
-            )
-            if files:
-                path = files[0].path
-                if path:
-                    self._load_session_from_path(path)
-        finally:
-            if picker in self.page.overlay:
-                self.page.overlay.remove(picker)
+        files = await picker.pick_files(
+            dialog_title="Load Session",
+            file_type=ft.FilePickerFileType.CUSTOM,
+            allowed_extensions=["fmmsess"],
+            allow_multiple=False,
+        )
+        if files:
+            path = files[0].path
+            if path:
+                self._load_session_from_path(path)
 
     def _load_session_from_path(self, path: str) -> None:
         self.settings.load_session(path)
@@ -1069,18 +1105,14 @@ class MainViewController:
 
     async def _save_session_async(self) -> None:
         picker = _file_picker_for_page(self.page)
-        try:
-            path = await picker.save_file(
-                dialog_title="Save Session",
-                file_name="session",
-                file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["fmmsess"],
-            )
-            if path is not None:
-                self._save_session_to_path(path)
-        finally:
-            if picker in self.page.overlay:
-                self.page.overlay.remove(picker)
+        path = await picker.save_file(
+            dialog_title="Save Session",
+            file_name="session",
+            file_type=ft.FilePickerFileType.CUSTOM,
+            allowed_extensions=["fmmsess"],
+        )
+        if path is not None:
+            self._save_session_to_path(path)
 
     def _save_session_to_path(self, path: str) -> None:
         self._sync_settings_from_controls()
@@ -1335,9 +1367,7 @@ class MainViewController:
             action = str(item_data or event.data or "")
             # FC 06 writes a single 16-bit register; a 32-bit Float is invalid.
             if self._is_single_register_write() and action.startswith("float:"):
-                self._show_snackbar(
-                    "Float requer Write Multiple Registers (FC 10)."
-                )
+                self._show_snackbar("Float requer Write Multiple Registers (FC 10).")
                 return
             match action:
                 case "base:bin":
@@ -1595,10 +1625,11 @@ def _connection_text(connected: bool, mode: str | None) -> str:
 
 
 def _file_picker_for_page(page: PageLike) -> ft.FilePicker:
+    for service in page.services:
+        if isinstance(service, ft.FilePicker):
+            return service
     picker = ft.FilePicker()
-    overlay = getattr(page, "overlay", None)
-    if isinstance(overlay, list) and picker not in overlay:
-        overlay.append(picker)
+    page.services.append(picker)
     return picker
 
 
