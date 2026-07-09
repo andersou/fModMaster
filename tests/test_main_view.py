@@ -431,6 +431,75 @@ class TestFloatBlockedOnWriteSingleRegister:
         assert comm.write_values == []
 
 
+class TestFunctionSwitchPreservesSessionState:
+    """Changing functions must not discard the session state; switching back
+    should restore qty, start address, and per-address format overrides."""
+
+    def test_qty_restored_when_switching_back(self) -> None:
+        controller, _, _ = _build_controller()
+        controls = controller.controls
+
+        controls.function_dropdown.value = "3"
+        controls.function_dropdown.on_select()
+        controls.qty_field.value = "10"
+
+        controls.function_dropdown.value = "6"
+        controls.function_dropdown.on_select()
+        assert controls.qty_field.value == "1"
+
+        controls.function_dropdown.value = "3"
+        controls.function_dropdown.on_select()
+        assert controls.qty_field.value == "10"
+
+    def test_format_overrides_restored_when_switching_back(self) -> None:
+        from fmodmaster.config import Settings
+
+        settings = Settings()
+        settings.register_formats = {0: 3, 1: 2}  # Float, Bin
+        settings.register_float_endians = {0: 0}
+        controller, comm, _ = _build_controller_with(FakeComm(), settings)
+        controls = controller.controls
+        comm.connected = True
+
+        controls.function_dropdown.value = "3"
+        controls.function_dropdown.on_select()
+        controller._refresh_controls(rebuild_grid=True)
+        assert controller._format_map()[0] is Base.Float
+
+        controls.function_dropdown.value = "6"
+        controls.function_dropdown.on_select()
+
+        controls.function_dropdown.value = "3"
+        controls.function_dropdown.on_select()
+        controller._refresh_controls(rebuild_grid=True)
+        assert 0 in controller._format_map()
+        assert controller._format_map()[0] is Base.Float
+
+    def test_qty_persists_across_multiple_switches(self) -> None:
+        controller, _, _ = _build_controller()
+        controls = controller.controls
+
+        controls.function_dropdown.value = "3"
+        controls.function_dropdown.on_select()
+        controls.qty_field.value = "10"
+
+        controls.function_dropdown.value = "6"
+        controls.function_dropdown.on_select()
+        assert controls.qty_field.value == "1"
+
+        controls.function_dropdown.value = "16"
+        controls.function_dropdown.on_select()
+        assert controls.qty_field.value == "2"
+
+        controls.function_dropdown.value = "6"
+        controls.function_dropdown.on_select()
+        assert controls.qty_field.value == "1"
+
+        controls.function_dropdown.value = "3"
+        controls.function_dropdown.on_select()
+        assert controls.qty_field.value == "10"
+
+
 def test_scan_start_disables_transaction_controls_and_stop_restores() -> None:
     controller, comm, _ = _build_controller()
     controls = controller.controls

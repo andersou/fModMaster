@@ -413,6 +413,9 @@ class MainViewController:
         self.root = self._build_layout()
         self._bind_handlers()
         self._refresh_controls(rebuild_grid=True)
+        # Function-switch checkpoint: preserves session choices (qty, format)
+        # until a read/write is actually executed.
+        self._fn_checkpoints: dict[int, dict[str, Any]] = {}
         # Surface INFO+ log records as snack bars.
         # Register on every fmodmaster.* logger (each has propagate=False per
         # logging_helper, so the handler must be attached to each module whose
@@ -697,19 +700,62 @@ class MainViewController:
         )
         self.schedule_refresh()
 
+    def _snapshot_current_fn_state(self, code: int) -> None:
+        """Save the current UI controls into the checkpoint for *code*.
+
+        Called *before* the function-dropdown value changes so we save the
+        outgoing function's state.
+        """
+        self._fn_checkpoints[code] = {
+            "qty": _parse_int(self.controls.qty_field.value, 1),
+            "start_addr": _parse_int(self.controls.start_addr_field.value, 0),
+            "default_base": self.controls.data_format_dropdown.value,
+            "format_map": dict(self.settings.register_formats),
+            "float_endian_map": dict(self.settings.register_float_endians),
+        }
+
+    def _restore_checkpoint(self, spec: FunctionSpec) -> bool:
+        """Restore controls from a saved checkpoint for *spec*.
+
+        Returns True if a checkpoint was found and applied.
+        """
+        cp = self._fn_checkpoints.get(spec.code)
+        if cp is None:
+            return False
+        self.controls.qty_field.value = str(cp["qty"])
+        self.controls.start_addr_field.value = str(cp["start_addr"])
+        self.controls.data_format_dropdown.value = str(cp["default_base"])
+        # Restore per-address format maps so the grid is rebuilt with them.
+        self.settings.register_formats.clear()
+        self.settings.register_formats.update(cp["format_map"])  # type: ignore[call-overload]
+        self.settings.register_float_endians.clear()
+        self.settings.register_float_endians.update(cp["float_endian_map"])  # type: ignore[call-overload]
+        return True
+
     def _on_function_change(self) -> None:
+        # Before switching, snapshot the state of the *outgoing* function.
+        # The dropdown value has already changed when on_select fires, so
+        # read the saved code rather than _function_spec().
+        prev_code = getattr(self, "_last_fn_code", _normalize_function_code(self.settings.function_code))
+        self._snapshot_current_fn_state(prev_code)
         spec = self._function_spec()
-        qty = _clamp_quantity(
-            _parse_int(self.controls.qty_field.value, spec.min_qty), spec
-        )
-        if spec.locks_quantity:
-            qty = 1
-        self.controls.qty_field.value = str(qty)
-        # FC 06 writes one 16-bit register, so a 32-bit Float (per-address
-        # override or legacy float mode) cannot be written. Warn when the
-        # current grid would write any float register. This catches registers
-        # read/set as float even when the default format dropdown is not Float.
-        if spec.code == FC_WRITE_SINGLE_REGISTER and (
+        self._last_fn_code = spec.code
+        # Restore checkpoint for the incoming function, if one exists.
+        if not self._restore_checkpoint(spec):
+            # First time on this function: clamp qty to its valid range.
+            qty = _clamp_quantity(
+                _parse_int(self.controls.qty_field.value, spec.min_qty), spec
+            )
+            if spec.locks_quantity:
+                qty = 1
+            self.controls.qty_field.value = str(qty)
+        # Single-register / single-coil writes have intrinsic limits that the
+        # session may not respect — warn the user when switching in.
+        if spec.code == FC_WRITE_SINGLE_COIL:
+            self._show_snackbar(
+                "Write Single Coil suporta apenas 1 bobina por vez."
+            )
+        elif spec.code == FC_WRITE_SINGLE_REGISTER and (
             self._grid_has_float() or self._data_base() is Base.Float
         ):
             _logger.warning(
@@ -986,6 +1032,7 @@ class MainViewController:
         self.settings.register_float_endians.clear()
         self.comm.values = []
         self.comm.valid = True
+        self._fn_checkpoints.clear()
         self._load_main_fields_from_settings()
         self._refresh_controls(rebuild_grid=True)
         self.page.update()
@@ -1012,6 +1059,7 @@ class MainViewController:
 
     def _load_session_from_path(self, path: str) -> None:
         self.settings.load_session(path)
+        self._fn_checkpoints.clear()
         self._load_main_fields_from_settings()
         self._refresh_controls(rebuild_grid=True)
         self.page.update()
